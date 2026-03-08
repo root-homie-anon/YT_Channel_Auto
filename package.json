@@ -1,0 +1,17 @@
+{
+  "name": "yt-channel-auto",
+  "version": "0.1.0",
+  "description": "Multi-channel YouTube video production and posting pipeline",
+  "main": "index.ts",
+  "scripts": {
+    "start": "ts-node index.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.0.0"
+  }
+}
