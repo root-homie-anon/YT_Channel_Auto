@@ -66,10 +66,10 @@ For each segment, in order:
 - Call Flux for one image per segment
 - Output: one image per segment
 
-**b. Kling Animation**
-- Pass each image through Kling photo-to-video
+**b. Runway ML Animation**
+- Pass each image through Runway ML Gen-4 Turbo photo-to-video
 - Subtle animation, loop-friendly
-- No Ken Burns — Kling animation is the motion
+- No Ken Burns — Runway ML animation is the motion
 - Output: one short animated clip per segment
 
 **c. Music Generation**
