@@ -39,7 +39,7 @@ Channel-specific behavior comes from `config.json` and `frameworks/` — not fro
 |-------|------|
 | `@content-strategist` | Reads channel config, plans content, extracts image cues from script, drives the session |
 | `@script-writer` | Script gen, teaser script gen, title, description, tags, hashtags |
-| `@asset-producer` | Calls Flux (images), ElevenLabs (VO), Sonauto (music), Kling (animation) |
+| `@asset-producer` | Calls Flux (images), ElevenLabs (VO), Sonauto (music), Runway ML (animation) |
 | `@video-compiler` | FFmpeg compilation for all formats, thumbnail generation |
 | `@channel-manager` | YouTube scheduling/posting, Telegram approval bot, channel config management |
 

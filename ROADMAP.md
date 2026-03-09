@@ -7,7 +7,7 @@
 Get the repo structure in place and all external services connected before any pipeline work begins.
 
 - Initialize repo with full folder structure per architecture doc
-- Set up `.env` with all shared API keys (ElevenLabs, Flux, Sonauto, Kling)
+- Set up `.env` with all shared API keys (ElevenLabs, Flux, Sonauto, Runway ML)
 - Build `config.ts` — env loader and validator
 - Write channel initialization flow — prompts user, generates channel folder, `config.json`, `CLAUDE.md`, and `frameworks/` scaffold
 - Confirm YouTube OAuth flow works per channel
@@ -23,10 +23,10 @@ Build and test each service integration independently before wiring into pipelin
 - `elevenlabs.ts` — VO generation, accepts script + voice ID, returns audio file
 - `flux.ts` — image generation, accepts prompt, returns image file
 - `sonauto.ts` — music generation, accepts style prompt + duration, returns audio file
-- `kling.ts` — photo-to-video animation, accepts image, returns animated clip
+- `runway.ts` — photo-to-video animation via Runway ML Gen-4 Turbo, accepts image, returns animated clip
 - `youtube.ts` — upload + scheduled post via YouTube Data API
 - `telegram.ts` — send message/file, receive and parse user replies
-- `ffmpeg.ts` — compilation utility, handles 16:9 and 9:16, Ken Burns, crossfade, audio layering
+- `remotion.ts` — video compilation via Remotion (React-based), handles 16:9 and 9:16, Ken Burns, crossfade, audio layering
 
 ---
 
@@ -38,7 +38,7 @@ Wire the full long-form narrated pipeline end to end.
 - `@script-writer` — generates long script using script-formula.md
 - `@asset-producer` — calls Flux, ElevenLabs, Sonauto in sequence
 - Telegram Checkpoint 1 — asset preview, approve/regen flow
-- `@video-compiler` — FFmpeg compile, Ken Burns + crossfade, 16:9 1080p
+- `@video-compiler` — Remotion compile, Ken Burns + crossfade, 16:9 1080p
 - `@video-compiler` — thumbnail generation
 - `@script-writer` — title, description, tags generation
 - Telegram Checkpoint 2 — final review, schedule time input
@@ -63,7 +63,7 @@ Extend narrated pipeline to support short format from long content.
 Build the music-only production track independently.
 
 - Session input flow — image concept, music concept, video length, segment count
-- Per-segment loop — Flux image → Kling animation → Sonauto music track
+- Per-segment loop — Flux image → Runway ML animation → Sonauto music track
 - Telegram Checkpoint 1 — segment sample previews
 - FFmpeg compile — loop animated clips to match track duration, crossfade between segments
 - Thumbnail + copy generation (music-only formulas)
