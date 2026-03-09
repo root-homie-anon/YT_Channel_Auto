@@ -11,8 +11,8 @@ export const config = {
   sonauto: {
     apiKey: process.env.SONAUTO_API_KEY ?? (() => { throw new Error('SONAUTO_API_KEY is required'); })(),
   },
-  kling: {
-    apiKey: process.env.KLING_API_KEY ?? (() => { throw new Error('KLING_API_KEY is required'); })(),
+  runway: {
+    apiKey: process.env.RUNWAY_API_KEY ?? (() => { throw new Error('RUNWAY_API_KEY is required'); })(),
   },
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN ?? (() => { throw new Error('TELEGRAM_BOT_TOKEN is required'); })(),
