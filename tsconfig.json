@@ -1,14 +1,22 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "outDir": "dist",
+    "rootDir": ".",
     "strict": true,
     "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "exactOptionalPropertyTypes": true,
     "esModuleInterop": true,
-    "outDir": "./dist",
-    "rootDir": "./",
-    "pretty": true
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
   },
-  "include": ["**/*.ts"],
+  "include": ["shared/**/*", "projects/**/*"],
   "exclude": ["node_modules", "dist"]
 }
