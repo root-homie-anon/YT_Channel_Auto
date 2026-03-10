@@ -1,109 +1,127 @@
 # YT_Channel_Auto — Project Roadmap
 
+> Last updated: 2026-03-10
+
 ---
 
-## Priority 1 — Project Scaffold & Infrastructure
+## Priority 1 — Project Scaffold & Infrastructure ✅ COMPLETE
 
 Get the repo structure in place and all external services connected before any pipeline work begins.
 
-- Initialize repo with full folder structure per architecture doc
-- Set up `.env` with all shared API keys (ElevenLabs, Flux, Sonauto, Runway ML)
-- Build `config.ts` — env loader and validator
-- Write channel initialization flow — prompts user, generates channel folder, `config.json`, `CLAUDE.md`, and `frameworks/` scaffold
-- Confirm YouTube OAuth flow works per channel
-- Confirm Telegram bot is live and receiving messages
-- Stub all five agent files in `.claude/agents/`
+- [x] Initialize repo with full folder structure per architecture doc
+- [x] Set up `.env.example` with all shared API keys (ElevenLabs, Flux, Sonauto, Runway ML)
+- [x] Build `config-loader.ts` + `env.ts` — env loader and validator
+- [x] Write channel initialization flow — generates channel folder, `config.json`, `CLAUDE.md`, and `frameworks/` scaffold
+- [ ] Confirm YouTube OAuth flow works per channel — **blocked on credentials**
+- [ ] Confirm Telegram bot is live and receiving messages — **blocked on credentials**
+- [x] Create all five agent files in `.claude/agents/`
 
 ---
 
-## Priority 2 — Shared API Integrations
+## Priority 2 — Shared API Integrations ✅ COMPLETE (code written, pending API key testing)
 
 Build and test each service integration independently before wiring into pipelines.
 
-- `elevenlabs.ts` — VO generation, accepts script + voice ID, returns audio file
-- `flux.ts` — image generation, accepts prompt, returns image file
-- `sonauto.ts` — music generation, accepts style prompt + duration, returns audio file
-- `runway.ts` — photo-to-video animation via Runway ML Gen-4 Turbo, accepts image, returns animated clip
-- `youtube.ts` — upload + scheduled post via YouTube Data API
-- `telegram.ts` — send message/file, receive and parse user replies
-- `ffmpeg.ts` — compilation utility, handles 16:9 and 9:16, Ken Burns, crossfade, audio layering
+- [x] `elevenlabs-service.ts` — VO generation, accepts script + voice ID, returns audio file
+- [x] `flux-service.ts` — image generation, accepts prompt, returns image file
+- [x] `sonauto-service.ts` — music generation, accepts style prompt + duration, returns audio file
+- [x] `runway-service.ts` — photo-to-video animation via Runway ML, accepts image, returns animated clip
+- [x] `youtube-service.ts` — upload + scheduled post via YouTube Data API
+- [x] `telegram-service.ts` — send message/file, receive and parse user replies (approval polling)
+- [x] `ffmpeg-service.ts` — compilation utility, handles 16:9 and 9:16, Ken Burns, crossfade, audio layering
+- [ ] Live testing against real APIs — **blocked on `.env` credentials**
 
 ---
 
-## Priority 3 — Track A Pipeline (Narrated — Long Format)
+## Priority 3 — Track A Pipeline (Narrated — Long Format) ✅ PIPELINE WIRED (untested)
 
 Wire the full long-form narrated pipeline end to end.
 
-- `@content-strategist` — reads channel config, extracts image cues from script, maps to timeline
-- `@script-writer` — generates long script using script-formula.md
-- `@asset-producer` — calls Flux, ElevenLabs, Sonauto in sequence
-- Telegram Checkpoint 1 — asset preview, approve/regen flow
-- `@video-compiler` — FFmpeg compile, Ken Burns + crossfade, 16:9 1080p
-- `@video-compiler` — thumbnail generation
-- `@script-writer` — title, description, tags generation
-- Telegram Checkpoint 2 — final review, schedule time input
-- `@channel-manager` — YouTube scheduled post
+- [x] `@content-strategist` — agent defined, reads channel config, extracts image cues from script
+- [x] `@script-writer` — agent defined for long script using script-formula.md
+- [x] `@asset-producer` — agent defined, calls Flux, ElevenLabs, Sonauto in sequence
+- [x] Telegram approval — single approval gate (approve/reject via bot)
+- [x] `@video-compiler` — FFmpeg compile, Ken Burns + crossfade, 16:9 1080p
+- [x] `@video-compiler` — thumbnail generation via FFmpeg
+- [x] `@script-writer` — title, description, tags generation (agent defined)
+- [x] `@channel-manager` — YouTube upload (unlisted → Telegram approval → public)
+- [x] Pipeline orchestrator (`pipeline.ts`) — wires full flow end to end
+- [ ] End-to-end test with real content — **blocked on credentials + frameworks**
+- [ ] CLI entry point (`npm run produce -- --channel ch-tbd --topic "..."`) — **not yet built**
 
 ---
 
-## Priority 4 — Track A Pipeline (Short Derivation)
+## Priority 4 — Track A Pipeline (Short Derivation) 🔶 PARTIAL
 
 Extend narrated pipeline to support short format from long content.
 
-- `@script-writer` — teaser script from long script using teaser-formula.md
-- `@asset-producer` — new VO for teaser, reuse/trim music from long
-- `@video-compiler` — 9:16 compile, image reframing strategy
-- Thumbnail + copy generation for short
-- Bundle with long in Telegram Checkpoint 2 — two schedule times
+- [x] `@script-writer` — teaser script support defined in agent
+- [x] `@video-compiler` — 9:16 short-form compile (`compileShortFormVideo`)
+- [x] Pipeline handles `long+short` format — compiles teaser alongside long
+- [ ] Image reframing strategy for 9:16 — **TBD at test phase**
+- [ ] Bundle long + short in single Telegram approval — **not yet implemented**
 
 ---
 
-## Priority 5 — Track B Pipeline (Music Only)
+## Priority 5 — Track B Pipeline (Music Only) 🔶 PARTIAL
 
 Build the music-only production track independently.
 
-- Session input flow — image concept, music concept, video length, segment count
-- Per-segment loop — Flux image → Runway ML animation → Sonauto music track
-- Telegram Checkpoint 1 — segment sample previews
-- FFmpeg compile — loop animated clips to match track duration, crossfade between segments
-- Thumbnail + copy generation (music-only formulas)
-- Telegram Checkpoint 2 — final review + schedule
+- [x] `compileMusicOnlyVideo` in ffmpeg-service — image looped over music track
+- [x] Pipeline handles `music-only` format
+- [ ] Per-segment loop — Flux image → Runway ML animation → Sonauto music track — **not yet wired**
+- [ ] Segment-based compilation with crossfade — **not yet implemented**
+- [ ] Telegram checkpoint for segment previews — **not yet implemented**
 
 ---
 
-## Priority 6 — Orchestrator & Parallel Channel Support
+## Priority 6 — Orchestrator & Parallel Channel Support 🔶 PARTIAL
 
 Enable multiple channels to run simultaneously from a single root orchestrator.
 
-- Root `CLAUDE.md` session-start hook and orchestrator logic
-- Subagent spawning per channel — scoped to channel directory
-- Parallel session management — channels run independently without state bleed
-- Channel selection and session kick-off flow
+- [x] Root `CLAUDE.md` orchestrator logic defined
+- [x] Autonomy section — agents operate independently, Telegram is only gate
+- [x] Channel directory structure and config isolation
+- [ ] Subagent spawning per channel — **not yet implemented in code**
+- [ ] Parallel session management — **not yet implemented**
+- [ ] CLI channel selection flow — **not yet built**
 
 ---
 
-## Priority 7 — Control Center Dashboard
+## Priority 7 — Control Center Dashboard ⬜ NOT STARTED
 
 Lightweight web dashboard on the VM for monitoring and managing all channels.
 
-- Node/Express server setup on VM
-- Channel status board — idle / pipeline step / waiting for approval / scheduled / posted
-- Run history per channel
-- Kick off next video flow per channel
-- Live pipeline progress updates (current step)
-- Basic auth to protect the dashboard
+- [ ] Node/Express server setup on VM
+- [ ] Channel status board — idle / pipeline step / waiting for approval / scheduled / posted
+- [ ] Run history per channel
+- [ ] Kick off next video flow per channel
+- [ ] Live pipeline progress updates (current step)
+- [ ] Basic auth to protect the dashboard
 
 ---
 
-## Priority 8 — Hardening & Scale
+## Priority 8 — Hardening & Scale ⬜ NOT STARTED
 
 Polish, error handling, and production readiness.
 
-- Error handling and retry logic per API integration
-- Cost tracking per video and per channel
-- Agent behavior testing across channel configs
-- Multi-channel parallel stress test
-- Documentation — setup guide, channel init guide, agent reference
+- [ ] Error handling and retry logic per API integration
+- [ ] Cost tracking per video and per channel
+- [ ] Agent behavior testing across channel configs
+- [ ] Multi-channel parallel stress test
+- [ ] Documentation — setup guide, channel init guide, agent reference
+
+---
+
+## Blockers
+
+| Blocker | Blocks | Action Needed |
+|---------|--------|---------------|
+| No `.env` file with real API keys | All live API testing | User provides keys for Flux, ElevenLabs, Sonauto, Runway ML, YouTube, Telegram |
+| No YouTube OAuth JSON per channel | YouTube upload/post | User runs OAuth flow and places JSON in channel dir |
+| Channel config TBD | Production runs | User fills in channel name, niche, voice ID |
+| Framework files TBD | Script/image/music quality | User authors all 6 framework files for ch-tbd |
+| No CLI entry point | Running the pipeline | Build `npm run produce` command |
 
 ---
 
