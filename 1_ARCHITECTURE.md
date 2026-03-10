@@ -28,12 +28,14 @@ youtube-automation/
 ├── shared/                      ← shared utilities across all channels
 │   ├── elevenlabs.ts            ← VO generation
 │   ├── sonauto.ts               ← music generation
-│   ├── flux.ts                  ← image generation
-│   ├── runway.ts                ← photo-to-video animation
+│   ├── flux.ts                  ← image generation (body images)
+│   ├── nanobana.ts              ← thumbnail generation via NB2 (Gemini)
+│   ├── kling.ts                 ← photo-to-video animation
 │   ├── youtube.ts               ← upload + scheduling
 │   ├── telegram.ts              ← approval bot
-│   ├── remotion.ts              ← video compilation
-│   └── config.ts                ← env/config loader
+│   ├── ffmpeg.ts                ← video compilation
+│   ├── config.ts                ← env/config loader
+│   └── description-formula.md  ← shared description + hashtag formula (all channels)
 ├── .claude/
 │   └── agents/                  ← shared agents, same across all channels
 │       ├── content-strategist.md
@@ -44,10 +46,17 @@ youtube-automation/
 └── projects/
     └── ch1-[channel-name]/
         ├── CLAUDE.md            ← channel-specific config + overrides
-        └── config.json          ← keys, voice ID, niche, format, frameworks
+        ├── config.json          ← keys, voice ID, niche, format, frameworks
+        └── frameworks/
+            ├── script-formula.md       ← script structure + production brief output
+            ├── teaser-formula.md       ← Mode A (derived) + Mode B (standalone)
+            ├── title-formula.md        ← title candidates + pairing principle
+            ├── thumbnail-formula.md    ← NB2 prompt construction + channel visual identity
+            ├── image-framework.md      ← Flux image style + prompt framework
+            └── music-framework.md      ← Sonauto music style framework
 ```
 
-**Key principle:** Agents are defined once at the root level and shared across all channel projects. Channel config drives agent behavior — agents read `config.json` from the active channel directory at runtime.
+**Key principle:** Agents are defined once at the root level and shared across all channel projects. Channel config drives agent behavior — agents read `config.json` and `frameworks/` from the active channel directory at runtime.
 
 ---
 
@@ -63,13 +72,56 @@ When starting a new channel project the system prompts the user for:
    - Any channel-specific API key overrides (most keys are shared)
 4. **Channel framework config:**
    - Niche/topic description
-   - Script structure formula (provided by user, stored in config)
-   - Image generation prompt framework (provided by user, stored in config)
-   - Music style framework (provided by user, stored in config)
-   - Thumbnail formula (stored in config)
-   - Title/description/tags formula (stored in config)
+   - Target audience
+   - Voice and tone
+   - Content rules / constraints
+   - Default target video length
+   - Script structure preference
+   - Image style framework
+   - Music style framework
+   - Thumbnail visual identity (color palette, style, faceless strategy)
+   - Title style preferences
+   - Fixed hashtags (exactly 2)
+   - CTA lines and links for descriptions
 
-The system generates the channel folder, `CLAUDE.md`, and `config.json` automatically from these inputs. No manual file creation required.
+The system generates the channel folder, `CLAUDE.md`, `config.json`, and all `frameworks/` files automatically from these inputs. No manual file creation required.
+
+---
+
+## Framework Files
+
+All framework files live in `projects/ch-[name]/frameworks/` except `description-formula.md` which is shared.
+
+| File | Scope | Purpose |
+|------|-------|---------|
+| `script-formula.md` | Per-channel | Long-form script structure, research phase, production brief output |
+| `teaser-formula.md` | Per-channel | Mode A (derived teaser) + Mode B (standalone short) |
+| `title-formula.md` | Per-channel | Title candidates, structural patterns, thumbnail pairing principle |
+| `thumbnail-formula.md` | Per-channel | NB2 prompt construction, channel visual identity, design rules |
+| `image-framework.md` | Per-channel | Flux body image style, prompt framework, visual language |
+| `music-framework.md` | Per-channel | Sonauto style, mood, instrumentation direction |
+| `description-formula.md` | Shared | Description structure, chapter markers, CTA block, hashtag rules |
+
+---
+
+## Script Writer Output — Two Documents Per Session
+
+Every script session produces two documents that all downstream agents reference:
+
+### 1. `script.md`
+Full narrated script with embedded image cue markers at every section break.
+Format: `[IMAGE CUE: description]` — extracted by `@content-strategist`, passed to `@asset-producer`.
+
+### 2. `production-brief.md`
+The single creative reference document for all downstream agents. Generated from research findings and the finalized script in the same pass. Contains:
+
+- **Research findings** — facts, stats, examples, hook material, audience language
+- **Image direction** — primary/supporting/avoid, visual mood, color palette, style, per-section cues
+- **Music direction** — primary mood, genre, energy, instrumentation, arc
+- **Thumbnail direction** — primary concept, emotional hook, text overlay words, best candidate image
+- **Title direction** — core hook phrase, primary keyword, supporting keywords, emotional target
+
+**Weighting system:** Each direction block uses primary / supporting / avoid hierarchy. Downstream agents prioritize accordingly.
 
 ---
 
@@ -81,64 +133,77 @@ The system generates the channel folder, `CLAUDE.md`, and `config.json` automati
 #### Full Pipeline (Long)
 
 ```
-1. Script Gen
-   - Agent uses channel script formula from config
-   - Topic provided by user at session start
-   - Output: structured script with sections
+1. Research + Angle Gen
+   - Agent searches topic before writing
+   - Logs facts, stats, examples, hook material, audience language
+   - Generates 2–3 angle options → user selects
+   - Angle locked before any writing begins
 
-2. Image Cue Extraction
-   - Agent reads script sequentially
-   - Extracts visual context clues per section
-   - Maps image prompts to script timeline
-   - Minimal user input required
+2. Script Gen
+   - Agent uses channel script-formula.md
+   - Follows hook → intro → body (sections) → bonus → outro structure
+   - Embeds [IMAGE CUE] markers at each section break
+   - Target: 12–15 min / ~1,700–2,100 words (channel default, overridable)
 
-3. Image Gen (Flux)
+3. Production Brief Gen
+   - Generated in same pass as script
+   - Image direction, music direction, thumbnail direction, title direction
+   - Primary / supporting / avoid weighting throughout
+   - All downstream agents read this file
+
+4. Image Gen (Flux)
    - One image per script section
-   - Uses channel image prompt framework + extracted cues
+   - Uses image-framework.md + per-section IMAGE CUE from production brief
    - Output: ordered image set
 
-4. VO Gen (ElevenLabs)
+5. VO Gen (ElevenLabs)
    - Uses channel voice ID (fixed per channel, never changes)
    - Full script narration
    - Output: VO audio file
 
-5. Music Gen (Sonauto)
+6. Music Gen (Sonauto)
    - Fresh track generated per video (not reused)
-   - Uses channel music style framework
+   - Uses music-framework.md + music direction from production brief
    - Background role — sits under VO
    - Output: music audio file
 
-6. ── TELEGRAM CHECKPOINT 1 ──
+7. ── TELEGRAM CHECKPOINT 1 ──
    - Agent sends asset summary + previews
    - User approves or requests regen
-   - On approval: proceed to compile
+   - On approval: proceed to compile + thumbnail (parallel)
 
-7. Compile (Remotion)
-   - 16:9 1080p YouTube standard
-   - Images: Ken Burns motion (subtle scale/pan)
-   - Transitions: crossfade between images
-   - Image timing: driven by VO section breaks
-   - Audio: music layer + VO layer on top
+8a. Compile (FFmpeg)                    ← runs in parallel with 8b
+    - 16:9 1080p YouTube standard
+    - Images: Ken Burns motion (subtle scale/pan)
+    - Transitions: crossfade between images
+    - Image timing: driven by VO section breaks
+    - Audio: music layer + VO layer on top
 
-8. Thumbnail Gen
-   - Agent selects most visually striking script image
-   - Generates thumbnail-optimized version
-   - Formula: bold 3-5 word text, high contrast,
-     single focal point, curiosity gap
-   - Uses channel thumbnail formula from config
+8b. Thumbnail Gen (Nano Banana 2)       ← runs in parallel with 8a
+    - Dedicated generated image — not a video frame
+    - Uses thumbnail-formula.md + thumbnail direction from production brief
+    - NB2 prompt constructed from: subject, mood, composition, color, text overlay
+    - Text overlay words pulled from finalized title
+    - Requires title to be finalized before generation
+    - Output: thumbnail.png at 4K resolution
+    - NOTE: Title gen (step 9) must complete before 8b begins
 
-9. Title / Description / Tags Gen
-   - Same agent handles all three (copy agent)
-   - Title formula: keyword front-loaded, curiosity gap,
-     optimal length — formula stored in channel config
-   - Description: YouTube best practices template
-     from channel config, includes CTAs, chapter markers
-   - Tags/hashtags: YouTube algorithm-aligned,
-     trends-informed — framework in channel config
+9. Title Gen
+   - @script-writer reads title-formula.md + production brief title direction
+   - Generates 3–5 candidates with pattern, character count, thumbnail pairing note
+   - User selects title → title locked
+   - Locked title feeds: thumbnail text overlay (8b), teaser CTA (if long+short), description (10)
 
-10. ── TELEGRAM CHECKPOINT 2 ──
-    - Agent sends final compiled video
-    - User reviews video, title, description, tags
+10. Description + Hashtags Gen
+    - @script-writer reads shared description-formula.md
+    - Pulls: title + keywords from production brief, section titles + word counts from script
+    - Pulls: CTAs, links, fixed hashtags from channel config.json
+    - Generates: above-the-fold, summary, chapter markers, CTA block, hashtags
+    - Chapter timestamps derived from section word count ratios
+
+11. ── TELEGRAM CHECKPOINT 2 ──
+    - Agent sends: compiled video + thumbnail + title + description + hashtags
+    - User reviews all elements
     - User approves and replies with post schedule time
     - Agent schedules post via YouTube API
 ```
@@ -146,11 +211,13 @@ The system generates the channel folder, `CLAUDE.md`, and `config.json` automati
 #### Short Derivation (from Long, long+short format only)
 
 ```
-1. Teaser Script Gen
-   - Agent takes long script as input
-   - Uses teaser formula from channel config
-   - Goal: hook + build intrigue + drive viewers to full video
-   - NOT a summary — a setup that leaves them wanting more
+1. Teaser Script Gen (Mode A)
+   - @script-writer reads teaser-formula.md — Mode A
+   - Inputs: script.md + production-brief.md from current session
+   - Extracts: strongest tension, most surprising finding, payoff promise
+   - Structure: hook → build → cliff → CTA (pointer to long video by exact title)
+   - CTA written after long title is finalized
+   - Target: 60–90 sec / ~120–150 words
 
 2. VO Gen (ElevenLabs)
    - New VO recording using teaser script
@@ -160,16 +227,19 @@ The system generates the channel folder, `CLAUDE.md`, and `config.json` automati
    - Images: reused from long (reframing for 9:16 TBD at test phase)
    - Music: trimmed/reused from long's generated track
 
-4. Compile (Remotion)
+4. Compile (FFmpeg)
    - 9:16 vertical format
    - Same Ken Burns + crossfade treatment
    - New VO, trimmed music
 
-5. Thumbnail Gen
-   - Same process as long, optimized for short format
+5. Thumbnail Gen (Nano Banana 2)
+   - Short-specific thumbnail concept from teaser brief
+   - 9:16 aspect ratio
+   - Same NB2 process as long thumbnail
 
-6. Title / Description / Tags Gen
+6. Title + Description + Hashtags Gen
    - Short-specific copy, same agent
+   - Description simplified for shorts format (no chapters)
 
 7. ── TELEGRAM CHECKPOINT 2 (bundled with long) ──
    - Both long and short reviewed in same session
@@ -195,18 +265,18 @@ The system generates the channel folder, `CLAUDE.md`, and `config.json` automati
 
    a. Image Gen (Flux)
       - One image per segment
-      - Uses channel image framework + session image concept
+      - Uses image-framework.md + session image concept
       - Output: static image
 
-   b. Runway ML Animation
-      - Each image passed through Runway ML Gen-4 Turbo photo-to-video
+   b. Kling Animation
+      - Each image passed through Kling photo-to-video
       - Subtle animation, loop-friendly, nothing action-packed
       - No Ken Burns — animation IS the motion
       - Output: short animated clip per segment
 
    c. Music Gen (Sonauto)
       - One ~30-minute track per segment
-      - Uses channel music framework + session music concept
+      - Uses music-framework.md + session music concept
       - Output: audio file per segment
 
 3. ── TELEGRAM CHECKPOINT 1 ──
@@ -214,24 +284,24 @@ The system generates the channel folder, `CLAUDE.md`, and `config.json` automati
    - User approves or requests regen
    - On approval: proceed to compile
 
-4. Compile (Remotion)
+4. Compile (FFmpeg)
    - 16:9 1080p YouTube standard
    - Each segment: animated clip looped to match track duration
    - Transitions: crossfade between segments (audio + video)
    - Output: single stitched video (3-8 hours)
 
-5. Thumbnail Gen
-   - Agent selects strongest image from segments
-   - Music-only style: visual-only, no text overlay typically
-   - Uses channel thumbnail formula
+5. Thumbnail Gen (Nano Banana 2)
+   - Agent selects strongest image concept from segments
+   - Music-only style: visual-only, minimal or no text overlay
+   - Uses thumbnail-formula.md, NB2 prompt constructed for ambient/mood aesthetic
 
-6. Title / Description / Tags Gen
-   - Music-focused copy formula
+6. Title + Description + Hashtags Gen
+   - Music-focused copy
    - Chapter markers per segment in description
 
 7. ── TELEGRAM CHECKPOINT 2 ──
    - Final video review
-   - Approve title, description, tags
+   - Approve title, description, hashtags
    - Set schedule time
    - Agent schedules post
 ```
@@ -244,11 +314,32 @@ Five agents, defaulted for every video project. No on-the-fly creation, no user 
 
 | Agent | Role | Responsibilities |
 |-------|------|-----------------|
-| `@content-strategist` | strategist | Reads channel config, plans content, extracts image cues from script, drives session |
-| `@script-writer` | content | Script gen (long), teaser script gen (short), title/description/tags/hashtags |
-| `@asset-producer` | producer | Calls Flux (images), ElevenLabs (VO), Sonauto (music), Runway ML (animation) |
-| `@video-compiler` | engineer | Remotion compilation for all formats, thumbnail gen |
+| `@content-strategist` | strategist | Reads channel config, plans content, extracts image cues from production brief, drives session |
+| `@script-writer` | content | Research, script gen, production brief gen, teaser script, title, description, hashtags |
+| `@asset-producer` | producer | Calls Flux (body images), ElevenLabs (VO), Sonauto (music), Kling (animation) |
+| `@video-compiler` | engineer | FFmpeg compilation for all formats, thumbnail gen via NB2 (`nanobana.ts`) |
 | `@channel-manager` | ops | YouTube scheduling/posting, Telegram approval bot, channel config management |
+
+---
+
+## Image Generation Routing
+
+Two image generation tools with distinct responsibilities:
+
+| Tool | File | Purpose | When |
+|------|------|---------|------|
+| Flux | `shared/flux.ts` | Body images — one per script section | During asset production, after script complete |
+| Nano Banana 2 | `shared/nanobana.ts` | Thumbnails only — dedicated generated image | After title locked, runs parallel with FFmpeg compile |
+
+**NB2 advantages for thumbnails:** Google Search grounding for accurate subject rendering, native precision text rendering, 4K output at Flash speed.
+
+**`nanobana.ts` responsibilities:**
+- Accepts thumbnail direction block from production brief
+- Accepts finalized text overlay words from locked title
+- Constructs thumbnail-optimized prompt per `thumbnail-formula.md`
+- Calls `gemini-3.1-flash-image-preview` via Gemini SDK
+- Aspect ratio: 16:9 for long, 9:16 for shorts
+- Output: `thumbnail.png` saved to session directory
 
 ---
 
@@ -258,13 +349,22 @@ Five agents, defaulted for every video project. No on-the-fly creation, no user 
 |---------|---------|-------------|
 | ElevenLabs | Voice over generation | Per character, varies by plan |
 | Sonauto | Music generation | TBD — per generation |
-| Flux | Image generation | Per image, pay-as-you-go |
-| Runway ML | Photo-to-video animation (Gen-4 Turbo) | $0.05/sec of output, pay-as-you-go |
+| Flux | Body image generation | Per image, pay-as-you-go |
+| Nano Banana 2 (Gemini) | Thumbnail generation | Per image via Gemini API — pay-as-you-go |
+| Kling | Photo-to-video animation | Per second of output |
 | YouTube Data API | Upload + scheduling | Free |
 | Telegram Bot API | Human approval flow | Free |
-| Remotion | Video compilation (React-based, programmatic) | Free — individual/teams up to 3 |
+| FFmpeg | Video compilation | Free, self-hosted |
 
-All API keys stored in `.env` at project root. YouTube OAuth credentials stored per channel in `projects/ch-[name]/config.json`. Most keys are shared across channels except YouTube OAuth (one per channel account).
+**Environment variables required:**
+- `ELEVENLABS_API_KEY`
+- `FLUX_API_KEY`
+- `GEMINI_API_KEY` ← for Nano Banana 2
+- `SONAUTO_API_KEY`
+- `KLING_API_KEY`
+- `TELEGRAM_BOT_TOKEN`
+
+All shared keys in `.env` at project root. YouTube OAuth per channel in `projects/ch-[name]/config.json`.
 
 ---
 
@@ -276,11 +376,11 @@ All API keys stored in `.env` at project root. YouTube OAuth credentials stored 
 - Triggered after: all assets generated (images, VO, music)
 - Bot sends: asset summary, sample previews
 - User responds: `approve` / `regen` / `regen [notes]`
-- On approve: compilation begins automatically
+- On approve: compilation + thumbnail generation begin (parallel)
 
 ### Checkpoint 2 — Final Review (pre-post)
-- Triggered after: compilation complete
-- Bot sends: final video file + title + description + tags
+- Triggered after: compilation complete + thumbnail complete
+- Bot sends: final video + thumbnail + title + description + hashtags
 - User responds: `approve` then replies with schedule time
 - On approve + time: YouTube scheduled post is set
 
@@ -313,18 +413,14 @@ Agents are pre-defined in `.claude/agents/`. The factory hook shows existing age
 
 ## What Is Still TBD
 
-- [ ] Exact script formula(s) per channel (user provides)
-- [ ] Exact image prompt framework per channel (user provides)
-- [ ] Exact teaser/short formula (user provides)
-- [ ] Thumbnail formula specifics (to be researched + finalized)
-- [ ] Title/description/tags formula specifics (to be researched + finalized)
 - [ ] Image reframing strategy for 9:16 shorts (test at implementation phase)
 - [ ] Sonauto pricing/limits at scale
-- [ ] Runway ML Gen-4 Turbo API — confirm loop output behavior and max clip duration
-- [ ] Chapter marker automation logic for long-form descriptions
+- [ ] Kling API availability and loop output specs
 - [ ] Skills required per agent (to be mapped when we reach agent file creation)
+- [ ] `image-framework.md` template (next session)
+- [ ] `music-framework.md` template (next session)
 - [ ] `youtube-niche-researcher` — covered in separate document (not started)
 
 ---
 
-*Last updated: session 3 — Kling replaced with Runway ML Gen-4 Turbo for photo-to-video animation. Official API, pay-as-you-go at ~$0.05/sec, no upfront commitment. Midjourney ruled out — no official API, ToS risk. Runway clips (5-10sec) looped via Remotion for full segment duration in music-only track.*
+*Last updated: session 2 — framework files complete, NB2 added for thumbnails, production brief system defined, image routing established, description formula finalized.*
