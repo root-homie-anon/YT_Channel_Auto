@@ -1,0 +1,40 @@
+import { config } from 'dotenv';
+import { resolve } from 'path';
+
+const PROJECT_ROOT = resolve(import.meta.dirname, '..', '..');
+
+config({ path: resolve(PROJECT_ROOT, '.env') });
+
+export const ENV = {
+  // Flux
+  FLUX_API_KEY: process.env.FLUX_API_KEY ?? '',
+  FLUX_API_URL: process.env.FLUX_API_URL ?? '',
+
+  // ElevenLabs
+  ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY ?? '',
+
+  // Sonauto
+  SONAUTO_API_KEY: process.env.SONAUTO_API_KEY ?? '',
+
+  // Runway ML
+  RUNWAY_API_KEY: process.env.RUNWAY_API_KEY ?? '',
+
+  // YouTube
+  YOUTUBE_API_KEY: process.env.YOUTUBE_API_KEY ?? '',
+
+  // Telegram
+  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN ?? '',
+  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID ?? '',
+
+  // General
+  NODE_ENV: process.env.NODE_ENV ?? 'development',
+  LOG_LEVEL: process.env.LOG_LEVEL ?? 'info',
+} as const;
+
+export function requireEnv(key: keyof typeof ENV): string {
+  const value = ENV[key];
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${key}`);
+  }
+  return value;
+}

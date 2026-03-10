@@ -7,6 +7,11 @@ Agents are shared across all channels. Channel behavior is driven entirely by pe
 
 ---
 
+## Autonomy
+Operate with maximum autonomy. Do not ask for confirmation before taking actions unless explicitly required by the pipeline (Telegram checkpoints are the only approval gates). Make reasonable decisions independently and proceed. Only pause if you hit a genuine blocker that cannot be resolved without user input.
+
+---
+
 ## Session Start Hook
 On every session start, fire the agent factory hook:
 ```

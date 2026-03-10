@@ -5,14 +5,16 @@
 node_modules/
 
 # YouTube OAuth credentials (per channel, never commit)
-**/.youtube-oauth.json
+projects/**/.youtube-oauth.json
 
-# channel projects (created at runtime, not tracked)
-projects/
+# Production outputs (large media files)
+projects/**/output/
 
 # build output
 dist/
-build/
+
+# logs
+*.log
 
 # OS
 .DS_Store

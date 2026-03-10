@@ -1,8 +1,9 @@
 {
   "name": "yt-channel-auto",
   "version": "0.1.0",
-  "description": "Multi-channel YouTube video production and posting pipeline",
   "type": "module",
+  "description": "Multi-channel YouTube video production and posting pipeline",
+  "main": "dist/index.js",
   "engines": {
     "node": ">=20.0.0"
   },
@@ -11,24 +12,21 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . --ext .ts",
-    "format": "prettier --write ."
+    "lint": "prettier --check 'src/**/*.ts'",
+    "format": "prettier --write 'src/**/*.ts'"
   },
   "dependencies": {
-    "@google/genai": "^1.0.0",
     "axios": "^1.7.0",
     "dotenv": "^16.4.0",
     "form-data": "^4.0.0",
+    "googleapis": "^144.0.0",
     "node-telegram-bot-api": "^0.66.0"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^22.0.0",
     "@types/node-telegram-bot-api": "^0.66.0",
-    "@typescript-eslint/eslint-plugin": "^7.0.0",
-    "@typescript-eslint/parser": "^7.0.0",
-    "eslint": "^8.0.0",
-    "prettier": "^3.0.0",
-    "tsx": "^4.0.0",
-    "typescript": "^5.4.0"
+    "prettier": "^3.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
   }
 }
