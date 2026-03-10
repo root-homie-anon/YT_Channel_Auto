@@ -1,0 +1,31 @@
+# environment
+.env
+
+# dependencies
+node_modules/
+
+# YouTube OAuth credentials (per channel, never commit)
+**/.youtube-oauth.json
+
+# channel projects (created at runtime, not tracked)
+projects/
+
+# build output
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/
+
+# session output (generated assets, not tracked)
+**/*.mp4
+**/*.mp3
+**/*.wav
+**/*.png
+**/*.jpg
+**/session-*/
