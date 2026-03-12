@@ -3,55 +3,21 @@ import * as path from 'path';
 import * as readline from 'readline';
 import * as http from 'http';
 import { exec } from 'child_process';
-import { config } from './config';
-
-// ── Types ─────────────────────────────────────────────────────
-
-type ChannelFormat = 'long' | 'short' | 'long+short' | 'music-only';
-
-interface ChannelInputs {
-  name: string;
-  slug: string;
-  format: ChannelFormat;
-  niche: string;
-  elevenLabsVoiceId: string;
-  musicOnly: {
-    defaultDurationHours: number | null;
-    defaultSegmentCount: number | null;
-  };
-}
-
-interface ChannelConfig {
-  channel: {
-    name: string;
-    slug: string;
-    format: ChannelFormat;
-    niche: string;
-  };
-  credentials: {
-    youtubeOAuthPath: string;
-    elevenLabsVoiceId: string;
-  };
-  frameworks: {
-    script?: string;
-    image: string;
-    music: string;
-    thumbnail: string;
-    title: string;
-    teaser?: string;
-    description: string;
-  };
-  musicOnly?: {
-    defaultDurationHours: number | null;
-    defaultSegmentCount: number | null;
-  };
-}
+import { config } from './config.js';
+import {
+  toSlug,
+  processTemplate,
+  buildConfig,
+  scaffoldFrameworks,
+  FRAMEWORK_FILES,
+  type ChannelInputs,
+} from '../src/utils/channel-factory.js';
+import type { ChannelFormat } from '../src/types/index.js';
 
 // ── Constants ─────────────────────────────────────────────────
 
-const PROJECT_ROOT = path.resolve(__dirname, '..');
+const PROJECT_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const PROJECTS_DIR = path.join(PROJECT_ROOT, 'projects');
-const TEMPLATES_DIR = path.join(PROJECT_ROOT, 'shared', 'channel-templates');
 const OAUTH_REDIRECT_PORT = 8765;
 const OAUTH_REDIRECT_URI = `http://localhost:${OAUTH_REDIRECT_PORT}/oauth/callback`;
 const YOUTUBE_SCOPES = [
@@ -74,11 +40,6 @@ const askRequired = async (question: string): Promise<string> => {
   }
   return answer;
 };
-
-// ── Slug generator ────────────────────────────────────────────
-
-const toSlug = (name: string): string =>
-  name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 
 // ── Input collection ──────────────────────────────────────────
 
@@ -121,94 +82,13 @@ const collectInputs = async (): Promise<ChannelInputs> => {
   return { name, slug, format, niche, elevenLabsVoiceId, musicOnly };
 };
 
-// ── Template processing ───────────────────────────────────────
-
-const TEMPLATE_MAP: Record<ChannelFormat, string> = {
-  'long': 'template-long.md',
-  'short': 'template-short.md',
-  'long+short': 'template-long-short.md',
-  'music-only': 'template-music-only.md',
-};
-
-const processTemplate = (inputs: ChannelInputs, oauthPath: string): string => {
-  const templateFile = TEMPLATE_MAP[inputs.format];
-  const templatePath = path.join(TEMPLATES_DIR, templateFile);
-  let content = fs.readFileSync(templatePath, 'utf-8');
-
-  const replacements: Record<string, string> = {
-    '{{CHANNEL_NAME}}': inputs.name,
-    '{{CHANNEL_SLUG}}': inputs.slug,
-    '{{CHANNEL_NICHE}}': inputs.niche,
-    '{{ELEVENLABS_VOICE_ID}}': inputs.elevenLabsVoiceId,
-    '{{YOUTUBE_OAUTH_PATH}}': oauthPath,
-    '{{DEFAULT_DURATION_HOURS}}': String(inputs.musicOnly.defaultDurationHours ?? 'not set'),
-    '{{DEFAULT_SEGMENT_COUNT}}': String(inputs.musicOnly.defaultSegmentCount ?? 'none — seamless video'),
-  };
-
-  for (const [placeholder, value] of Object.entries(replacements)) {
-    content = content.replaceAll(placeholder, value);
-  }
-
-  return content;
-};
-
-// ── Config generation ─────────────────────────────────────────
-
-const buildConfig = (inputs: ChannelInputs, oauthPath: string): ChannelConfig => {
-  const includesShorts = inputs.format === 'short' || inputs.format === 'long+short';
-  const includesNarration = inputs.format !== 'music-only';
-
-  const channelConfig: ChannelConfig = {
-    channel: {
-      name: inputs.name,
-      slug: inputs.slug,
-      format: inputs.format,
-      niche: inputs.niche,
-    },
-    credentials: {
-      youtubeOAuthPath: oauthPath,
-      elevenLabsVoiceId: inputs.elevenLabsVoiceId,
-    },
-    frameworks: {
-      ...(includesNarration && { script: 'frameworks/script-formula.md' }),
-      image: 'frameworks/image-framework.md',
-      music: 'frameworks/music-framework.md',
-      thumbnail: 'frameworks/thumbnail-formula.md',
-      title: 'frameworks/title-formula.md',
-      ...(includesShorts && { teaser: 'frameworks/teaser-formula.md' }),
-      description: '../../shared/description-formula.md',
-    },
-    ...(inputs.format === 'music-only' && { musicOnly: inputs.musicOnly }),
-  };
-
-  return channelConfig;
-};
-
-// ── Framework scaffolding ─────────────────────────────────────
-
-const FRAMEWORK_FILES: Record<string, string[]> = {
-  'long': ['script-formula.md', 'image-framework.md', 'music-framework.md', 'thumbnail-formula.md', 'title-formula.md'],
-  'short': ['script-formula.md', 'image-framework.md', 'music-framework.md', 'thumbnail-formula.md', 'title-formula.md'],
-  'long+short': ['script-formula.md', 'image-framework.md', 'music-framework.md', 'thumbnail-formula.md', 'title-formula.md', 'teaser-formula.md'],
-  'music-only': ['image-framework.md', 'music-framework.md', 'thumbnail-formula.md', 'title-formula.md'],
-};
-
-const scaffoldFrameworks = (frameworksDir: string, format: ChannelFormat): void => {
-  fs.mkdirSync(frameworksDir, { recursive: true });
-  for (const file of FRAMEWORK_FILES[format]) {
-    const filePath = path.join(frameworksDir, file);
-    const name = file.replace('.md', '').replace(/-/g, ' ');
-    fs.writeFileSync(filePath, `# ${name}\n\n<!-- Author your framework here before first run -->\n`);
-  }
-};
-
 // ── YouTube OAuth flow ────────────────────────────────────────
 
 const runYouTubeOAuth = async (channelDir: string, slug: string): Promise<string> => {
   const oauthPath = path.join(channelDir, '.youtube-oauth.json');
 
-  const clientId = process.env.YOUTUBE_CLIENT_ID;
-  const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
+  const clientId = process.env['YOUTUBE_CLIENT_ID'];
+  const clientSecret = process.env['YOUTUBE_CLIENT_SECRET'];
 
   if (!clientId || !clientSecret) {
     console.log('\n  ⚠  YOUTUBE_CLIENT_ID or YOUTUBE_CLIENT_SECRET not set in .env');
@@ -309,11 +189,12 @@ const initChannel = async (): Promise<void> => {
     // Scaffold empty framework files
     scaffoldFrameworks(frameworksDir, inputs.format);
 
+    const frameworkFileCount = FRAMEWORK_FILES[inputs.format].length;
     console.log(`\n── Channel Initialized ──`);
     console.log(`\n  ✓ ${channelDir}`);
     console.log(`  ✓ CLAUDE.md generated`);
     console.log(`  ✓ config.json generated`);
-    console.log(`  ✓ frameworks/ scaffolded (${FRAMEWORK_FILES[inputs.format].length} files)`);
+    console.log(`  ✓ frameworks/ scaffolded (${frameworkFileCount} files)`);
     console.log(`\n  Next: author your framework files in ${frameworksDir}`);
     console.log('  Then open Claude Code in this project and select the channel to begin.\n');
 

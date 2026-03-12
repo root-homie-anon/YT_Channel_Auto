@@ -1,10 +1,12 @@
 import { readFile } from 'fs/promises';
-import { join, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
+import { fileURLToPath } from 'url';
 
 import { ConfigError } from '../errors/index.js';
 import { ChannelConfig } from '../types/index.js';
 
-const PROJECT_ROOT = resolve(import.meta.dirname, '..', '..');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = resolve(__dirname, '..', '..');
 
 export async function loadChannelConfig(channelSlug: string): Promise<ChannelConfig> {
   const channelDir = join(PROJECT_ROOT, 'projects', channelSlug);

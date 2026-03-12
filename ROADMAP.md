@@ -1,6 +1,6 @@
 # YT_Channel_Auto — Project Roadmap
 
-> Last updated: 2026-03-10
+> Last updated: 2026-03-11
 
 ---
 
@@ -12,24 +12,25 @@ Get the repo structure in place and all external services connected before any p
 - [x] Set up `.env.example` with all shared API keys (ElevenLabs, Flux, Sonauto, Runway ML)
 - [x] Build `config-loader.ts` + `env.ts` — env loader and validator
 - [x] Write channel initialization flow — generates channel folder, `config.json`, `CLAUDE.md`, and `frameworks/` scaffold
-- [ ] Confirm YouTube OAuth flow works per channel — **blocked on credentials**
-- [ ] Confirm Telegram bot is live and receiving messages — **blocked on credentials**
+- [x] Confirm YouTube OAuth flow works per channel — tested and tokens saved for ch-strange-universe
+- [x] Confirm Telegram bot is live and receiving messages — tested and working
 - [x] Create all five agent files in `.claude/agents/`
 
 ---
 
-## Priority 2 — Shared API Integrations ✅ COMPLETE (code written, pending API key testing)
+## Priority 2 — Shared API Integrations ✅ COMPLETE (code written, live testing pending)
 
 Build and test each service integration independently before wiring into pipelines.
 
-- [x] `elevenlabs-service.ts` — VO generation, accepts script + voice ID, returns audio file
-- [x] `flux-service.ts` — image generation, accepts prompt, returns image file
-- [x] `sonauto-service.ts` — music generation, accepts style prompt + duration, returns audio file
-- [x] `runway-service.ts` — photo-to-video animation via Runway ML, accepts image, returns animated clip
+- [x] `elevenlabs-service.ts` — VO generation, accepts script + voice ID, returns audio file (ElevenLabs v1 TTS)
+- [x] `flux-service.ts` — image generation via BFL async polling, accepts prompt, returns image file
+- [x] `sonauto-service.ts` — music generation via v1/generations endpoint, accepts style prompt + duration, returns audio file
+- [x] `runway-service.ts` — photo-to-video animation via Runway Gen-3 Alpha, accepts image, returns animated clip
 - [x] `youtube-service.ts` — upload + scheduled post via YouTube Data API
 - [x] `telegram-service.ts` — send message/file, receive and parse user replies (approval polling)
 - [x] `ffmpeg-service.ts` — compilation utility, handles 16:9 and 9:16, Ken Burns, crossfade, audio layering
-- [ ] Live testing against real APIs — **blocked on `.env` credentials**
+- [x] All services implemented with correct API structures
+- [ ] Live testing against real APIs — pending voice ID for ElevenLabs
 
 ---
 
@@ -46,8 +47,8 @@ Wire the full long-form narrated pipeline end to end.
 - [x] `@script-writer` — title, description, tags generation (agent defined)
 - [x] `@channel-manager` — YouTube upload (unlisted → Telegram approval → public)
 - [x] Pipeline orchestrator (`pipeline.ts`) — wires full flow end to end
-- [ ] End-to-end test with real content — **blocked on credentials + frameworks**
-- [ ] CLI entry point (`npm run produce -- --channel ch-tbd --topic "..."`) — **not yet built**
+- [ ] End-to-end test with real content — **pending voice ID + frameworks**
+- [ ] CLI entry point (`npm run produce -- --channel ch-tbd --topic "..."`) — **not built; dashboard serves as alternative**
 
 ---
 
@@ -88,16 +89,17 @@ Enable multiple channels to run simultaneously from a single root orchestrator.
 
 ---
 
-## Priority 7 — Control Center Dashboard ⬜ NOT STARTED
+## Priority 7 — Control Center Dashboard ✅ COMPLETE
 
-Lightweight web dashboard on the VM for monitoring and managing all channels.
+Express server with REST API + SSE for monitoring and managing all channels.
 
-- [ ] Node/Express server setup on VM
-- [ ] Channel status board — idle / pipeline step / waiting for approval / scheduled / posted
-- [ ] Run history per channel
-- [ ] Kick off next video flow per channel
-- [ ] Live pipeline progress updates (current step)
-- [ ] Basic auth to protect the dashboard
+- [x] Node/Express server setup — running via `npm run dashboard`
+- [x] Status Board — channel status overview (idle / pipeline step / waiting / scheduled / posted)
+- [x] Channel Manager — produce, queue, and history views per channel
+- [x] Pipeline Monitor — live pipeline progress updates via SSE
+- [x] New Channel Setup — channel initialization integrated into dashboard
+- [x] OAuth flow integrated into dashboard
+- [ ] Basic auth to protect the dashboard — **not yet implemented**
 
 ---
 
@@ -115,13 +117,15 @@ Polish, error handling, and production readiness.
 
 ## Blockers
 
-| Blocker | Blocks | Action Needed |
-|---------|--------|---------------|
-| No `.env` file with real API keys | All live API testing | User provides keys for Flux, ElevenLabs, Sonauto, Runway ML, YouTube, Telegram |
-| No YouTube OAuth JSON per channel | YouTube upload/post | User runs OAuth flow and places JSON in channel dir |
-| Channel config TBD | Production runs | User fills in channel name, niche, voice ID |
-| Framework files TBD | Script/image/music quality | User authors all 6 framework files for ch-tbd |
-| No CLI entry point | Running the pipeline | Build `npm run produce` command |
+| Blocker | Status | Notes |
+|---------|--------|-------|
+| `.env` with real API keys | ✅ DONE | All keys set |
+| YouTube OAuth per channel | ✅ DONE | Tokens saved for ch-strange-universe |
+| Telegram bot | ✅ DONE | Live and tested |
+| Channel config | 🔶 PARTIAL | Name/niche set for ch-strange-universe, voice ID still TBD |
+| Framework files | 🔶 PARTIAL | Templates exist in `templates/channel/frameworks/`, copied to channels on init |
+| CLI entry point | ⬜ NOT BUILT | Dashboard serves as alternative entry point |
+| ElevenLabs voice ID | ⬜ NEEDED | Required before live API testing can proceed |
 
 ---
 

@@ -12,19 +12,24 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "init-channel": "tsx shared/init-channel.ts",
+    "dashboard": "tsx src/dashboard/server.ts",
     "lint": "prettier --check 'src/**/*.ts'",
     "format": "prettier --write 'src/**/*.ts'"
   },
   "dependencies": {
+    "@google/genai": "^1.44.0",
     "axios": "^1.7.0",
     "dotenv": "^16.4.0",
+    "express": "^5.2.1",
     "form-data": "^4.0.0",
     "googleapis": "^144.0.0",
     "node-telegram-bot-api": "^0.66.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
-    "@types/node-telegram-bot-api": "^0.66.0",
+    "@types/node-telegram-bot-api": "^0.64.14",
     "prettier": "^3.4.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"

@@ -1,0 +1,21 @@
+{
+  "channel": {
+    "name": "Strange Universe",
+    "slug": "ch-strange-universe",
+    "format": "long+short",
+    "niche": "UFOs"
+  },
+  "credentials": {
+    "youtubeOAuthPath": "projects/ch-strange-universe/.youtube-oauth.json",
+    "elevenLabsVoiceId": "tbd"
+  },
+  "frameworks": {
+    "script": "frameworks/script-formula.md",
+    "image": "frameworks/image-framework.md",
+    "music": "frameworks/music-framework.md",
+    "thumbnail": "frameworks/thumbnail-formula.md",
+    "title": "frameworks/title-formula.md",
+    "teaser": "frameworks/teaser-formula.md",
+    "description": "../../shared/description-formula.md"
+  }
+}

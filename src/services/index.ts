@@ -8,6 +8,7 @@ export {
   compileMusicOnlyVideo,
   generateThumbnail,
 } from './ffmpeg-service.js';
+export { generateThumbnailNB2 } from './nanobana-service.js';
 export { uploadVideo, updateVideoPrivacy } from './youtube-service.js';
 export { sendApprovalRequest, pollForApproval } from './telegram-service.js';
 export { runPipeline } from './pipeline.js';

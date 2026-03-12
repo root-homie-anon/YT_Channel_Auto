@@ -24,7 +24,7 @@ This document covers **`youtube-automation` only**.
 ```
 YT_Channel_Auto/
 ├── CLAUDE.md                          ← master orchestrator + autonomy rules
-├── 1_ARCHITECTURE.md                  ← this file
+├── ARCHITECTURE.md                    ← this file
 ├── ROADMAP.md                         ← progress tracker
 ├── package.json                       ← ESM, TypeScript, googleapis
 ├── tsconfig.json                      ← strict, Node16 module
@@ -42,6 +42,7 @@ YT_Channel_Auto/
 │   │   ├── elevenlabs-service.ts      ← VO generation
 │   │   ├── sonauto-service.ts         ← music generation
 │   │   ├── runway-service.ts          ← photo-to-video animation
+│   │   ├── nanobana-service.ts        ← Gemini NB2 thumbnail generation
 │   │   ├── ffmpeg-service.ts          ← video compilation + thumbnails
 │   │   ├── youtube-service.ts         ← upload + scheduling
 │   │   └── telegram-service.ts        ← approval bot
@@ -52,7 +53,15 @@ YT_Channel_Auto/
 │       └── file-helpers.ts            ← fs utilities
 ├── shared/
 │   ├── description-formula.md         ← shared across all channels
-│   └── (legacy .ts files — superseded by src/services/)
+│   ├── config.ts                      ← global API key loader
+│   ├── init-channel.ts                ← interactive channel setup CLI
+│   ├── nb2-setup.md                   ← Nano Banana 2 integration guide
+│   ├── channel-templates/             ← CLAUDE.md templates per format
+│   │   ├── template-long.md
+│   │   ├── template-short.md
+│   │   ├── template-long-short.md
+│   │   └── template-music-only.md
+│   └── (legacy .ts stubs — superseded by src/services/)
 ├── .claude/
 │   └── agents/
 │       ├── content-strategist.md

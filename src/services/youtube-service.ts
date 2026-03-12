@@ -8,10 +8,41 @@ import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('youtube-service');
 
+interface OAuthFile {
+  web?: {
+    client_id: string;
+    client_secret: string;
+  };
+  tokens?: {
+    access_token: string;
+    refresh_token: string;
+    expiry_date?: number;
+  };
+}
+
 async function getAuthClient(oauthPath: string) {
-  const credentials = JSON.parse(await readFile(oauthPath, 'utf-8'));
-  const auth = google.auth.fromJSON(credentials);
-  return auth as unknown as InstanceType<typeof google.auth.OAuth2>;
+  const raw = JSON.parse(await readFile(oauthPath, 'utf-8')) as OAuthFile;
+
+  const clientId = raw.web?.client_id ?? process.env.YOUTUBE_CLIENT_ID;
+  const clientSecret = raw.web?.client_secret ?? process.env.YOUTUBE_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new ApiError('Missing OAuth client credentials', 'youtube');
+  }
+
+  const auth = new google.auth.OAuth2(clientId, clientSecret);
+
+  if (raw.tokens?.refresh_token) {
+    auth.setCredentials({
+      access_token: raw.tokens.access_token,
+      refresh_token: raw.tokens.refresh_token,
+      expiry_date: raw.tokens.expiry_date ?? null,
+    });
+  } else {
+    throw new ApiError('No refresh token found in OAuth file — run OAuth flow first', 'youtube');
+  }
+
+  return auth;
 }
 
 export async function uploadVideo(
@@ -62,12 +93,15 @@ export async function uploadVideo(
 
     log.info(`Thumbnail set for video: ${videoId}`);
 
-    return {
+    const result: PublishResult = {
       youtubeVideoId: videoId,
       youtubeUrl: `https://www.youtube.com/watch?v=${videoId}`,
       status: 'uploaded',
-      scheduledTime: request.scheduledTime,
     };
+    if (request.scheduledTime !== undefined) {
+      result.scheduledTime = request.scheduledTime;
+    }
+    return result;
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError(

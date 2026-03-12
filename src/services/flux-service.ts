@@ -1,4 +1,5 @@
 import { join } from 'path';
+import { writeFile } from 'fs/promises';
 
 import { ApiError, AssetError } from '../errors/index.js';
 import { AssetFile } from '../types/index.js';
@@ -25,10 +26,11 @@ export async function generateImage(options: FluxGenerateOptions): Promise<Asset
   await ensureDir(join(outputPath, '..'));
 
   try {
-    const response = await fetch(`${apiUrl}/v1/generate`, {
+    // Step 1: Submit generation request
+    const submitResponse = await fetch(apiUrl, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'x-key': apiKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -39,16 +41,28 @@ export async function generateImage(options: FluxGenerateOptions): Promise<Asset
       }),
     });
 
-    if (!response.ok) {
+    if (!submitResponse.ok) {
+      const errorBody = await submitResponse.text();
       throw new ApiError(
-        `Flux API returned ${response.status}: ${response.statusText}`,
+        `BFL API returned ${submitResponse.status}: ${errorBody}`,
         'flux',
-        response.status
+        submitResponse.status
       );
     }
 
-    const imageBuffer = Buffer.from(await response.arrayBuffer());
-    const { writeFile } = await import('fs/promises');
+    const submitResult = (await submitResponse.json()) as { id: string; polling_url: string };
+    log.info(`Image generation submitted, task: ${submitResult.id}`);
+
+    // Step 2: Poll for completion
+    const sampleUrl = await pollForResult(submitResult.polling_url ?? `https://api.bfl.ai/v1/get_result?id=${submitResult.id}`);
+
+    // Step 3: Download the image (signed URL valid for 10 min)
+    const imageResponse = await fetch(sampleUrl);
+    if (!imageResponse.ok) {
+      throw new ApiError('Failed to download generated image from BFL', 'flux', imageResponse.status);
+    }
+
+    const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
     await writeFile(outputPath, imageBuffer);
 
     log.info(`Image saved: ${outputPath}`);
@@ -67,6 +81,41 @@ export async function generateImage(options: FluxGenerateOptions): Promise<Asset
       error as Error
     );
   }
+}
+
+async function pollForResult(pollingUrl: string): Promise<string> {
+  const MAX_POLLS = 60;
+  const POLL_INTERVAL_MS = 3000;
+
+  for (let i = 0; i < MAX_POLLS; i++) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+
+    const response = await fetch(pollingUrl);
+    if (!response.ok) {
+      throw new ApiError(
+        `BFL polling failed: ${response.status}`,
+        'flux',
+        response.status
+      );
+    }
+
+    const result = (await response.json()) as {
+      status: string;
+      result?: { sample: string };
+    };
+
+    if (result.status === 'Ready' && result.result?.sample) {
+      return result.result.sample;
+    }
+
+    if (result.status === 'Error' || result.status === 'Failed') {
+      throw new ApiError('BFL image generation failed', 'flux');
+    }
+
+    log.debug(`Poll ${i + 1}/${MAX_POLLS}: status=${result.status}`);
+  }
+
+  throw new ApiError('BFL image generation timed out after 3 minutes', 'flux');
 }
 
 export async function generateBatchImages(

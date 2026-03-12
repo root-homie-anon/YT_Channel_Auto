@@ -9,6 +9,8 @@ import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('sonauto-service');
 
+const SONAUTO_BASE = 'https://api.sonauto.ai/v1';
+
 interface MusicGenerateOptions {
   prompt: string;
   durationSeconds: number;
@@ -25,8 +27,6 @@ export async function generateMusic(options: MusicGenerateOptions): Promise<Asse
     prompt,
     durationSeconds,
     outputPath,
-    genre,
-    mood,
     isInstrumental = true,
   } = options;
 
@@ -34,8 +34,8 @@ export async function generateMusic(options: MusicGenerateOptions): Promise<Asse
   await ensureDir(join(outputPath, '..'));
 
   try {
-    // Start generation
-    const startResponse = await fetch('https://api.sonauto.ai/v1/generate', {
+    // Step 1: Start generation
+    const startResponse = await fetch(`${SONAUTO_BASE}/generations`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -43,29 +43,53 @@ export async function generateMusic(options: MusicGenerateOptions): Promise<Asse
       },
       body: JSON.stringify({
         prompt,
-        duration: durationSeconds,
-        genre,
-        mood,
-        instrumental: isInstrumental,
+        num_songs: 1,
+        ...(isInstrumental && { tags: 'instrumental' }),
       }),
     });
 
     if (!startResponse.ok) {
+      const errorBody = await startResponse.text();
       throw new ApiError(
-        `Sonauto API returned ${startResponse.status}: ${startResponse.statusText}`,
+        `Sonauto API returned ${startResponse.status}: ${errorBody}`,
         'sonauto',
         startResponse.status
       );
     }
 
-    const { taskId } = (await startResponse.json()) as { taskId: string };
+    const { task_id: taskId } = (await startResponse.json()) as { task_id: string };
     log.info(`Music generation started, task: ${taskId}`);
 
-    // Poll for completion
-    const audioUrl = await pollForCompletion(apiKey, taskId);
+    // Step 2: Poll for completion
+    await pollForStatus(apiKey, taskId);
 
-    // Download the audio
-    const audioResponse = await fetch(audioUrl);
+    // Step 3: Get result and download
+    const resultResponse = await fetch(`${SONAUTO_BASE}/generations/${taskId}`, {
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    });
+
+    if (!resultResponse.ok) {
+      throw new ApiError(
+        `Sonauto result fetch failed: ${resultResponse.status}`,
+        'sonauto',
+        resultResponse.status
+      );
+    }
+
+    const resultData = (await resultResponse.json()) as {
+      song_paths: string[];
+      error_message?: string;
+    };
+
+    if (!resultData.song_paths?.[0]) {
+      throw new ApiError(
+        `Sonauto returned no song: ${resultData.error_message ?? 'unknown error'}`,
+        'sonauto'
+      );
+    }
+
+    // Download the audio file (CDN URL, no auth needed)
+    const audioResponse = await fetch(resultData.song_paths[0]);
     if (!audioResponse.ok) {
       throw new ApiError('Failed to download generated music', 'sonauto', audioResponse.status);
     }
@@ -80,7 +104,7 @@ export async function generateMusic(options: MusicGenerateOptions): Promise<Asse
       path: outputPath,
       type: 'music',
       durationSeconds,
-      metadata: { prompt, genre: genre ?? '', mood: mood ?? '' },
+      metadata: { prompt },
     };
   } catch (error) {
     if (error instanceof ApiError) throw error;
@@ -92,15 +116,15 @@ export async function generateMusic(options: MusicGenerateOptions): Promise<Asse
   }
 }
 
-async function pollForCompletion(apiKey: string, taskId: string): Promise<string> {
+async function pollForStatus(apiKey: string, taskId: string): Promise<void> {
   const MAX_POLLS = 120;
   const POLL_INTERVAL_MS = 5000;
 
   for (let i = 0; i < MAX_POLLS; i++) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
 
-    const statusResponse = await fetch(`https://api.sonauto.ai/v1/status/${taskId}`, {
-      headers: { 'Authorization': `Bearer ${apiKey}` },
+    const statusResponse = await fetch(`${SONAUTO_BASE}/generations/status/${taskId}`, {
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     });
 
     if (!statusResponse.ok) {
@@ -111,24 +135,17 @@ async function pollForCompletion(apiKey: string, taskId: string): Promise<string
       );
     }
 
-    const status = (await statusResponse.json()) as {
-      status: string;
-      audioUrl?: string;
-      error?: string;
-    };
+    const status = (await statusResponse.text()).trim().replace(/"/g, '');
 
-    if (status.status === 'completed' && status.audioUrl) {
-      return status.audioUrl;
+    if (status === 'SUCCESS') {
+      return;
     }
 
-    if (status.status === 'failed') {
-      throw new ApiError(
-        `Music generation failed: ${status.error ?? 'Unknown error'}`,
-        'sonauto'
-      );
+    if (status === 'FAILURE') {
+      throw new ApiError('Music generation failed', 'sonauto');
     }
 
-    log.debug(`Poll ${i + 1}/${MAX_POLLS}: status=${status.status}`);
+    log.debug(`Poll ${i + 1}/${MAX_POLLS}: status=${status}`);
   }
 
   throw new ApiError('Music generation timed out after 10 minutes', 'sonauto');

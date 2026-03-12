@@ -1,7 +1,9 @@
 import { config } from 'dotenv';
-import { resolve } from 'path';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 
-const PROJECT_ROOT = resolve(import.meta.dirname, '..', '..');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = resolve(__dirname, '..', '..');
 
 config({ path: resolve(PROJECT_ROOT, '.env') });
 
@@ -25,6 +27,18 @@ export const ENV = {
   // Telegram
   TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN ?? '',
   TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID ?? '',
+
+  // Gemini / Nano Banana 2
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY ?? '',
+
+  // YouTube OAuth
+  YOUTUBE_CLIENT_ID: process.env.YOUTUBE_CLIENT_ID ?? '',
+  YOUTUBE_CLIENT_SECRET: process.env.YOUTUBE_CLIENT_SECRET ?? '',
+
+  // Dashboard
+  DASHBOARD_PORT: process.env.DASHBOARD_PORT ?? '3000',
+  DASHBOARD_USER: process.env.DASHBOARD_USER ?? '',
+  DASHBOARD_PASS: process.env.DASHBOARD_PASS ?? '',
 
   // General
   NODE_ENV: process.env.NODE_ENV ?? 'development',

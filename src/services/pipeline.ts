@@ -17,7 +17,6 @@ import {
   getOutputDir,
   loadChannelConfig,
   loadFramework,
-  loadSharedDescriptionFormula,
 } from '../utils/config-loader.js';
 import { generateProductionId, writeJsonFile } from '../utils/file-helpers.js';
 import { createLogger } from '../utils/logger.js';
@@ -212,14 +211,7 @@ async function publishWithApproval(
   compilation: CompilationResult,
   scriptOutput: ScriptOutput
 ): Promise<PublishResult> {
-  const oauthPath = join(
-    getChannelDir(config.channel.slug),
-    '..',
-    '..',
-    config.credentials.youtubeOAuthPath
-  );
-
-  const descriptionFormula = await loadSharedDescriptionFormula();
+  const oauthPath = join(getChannelDir(config.channel.slug), '.youtube-oauth.json');
 
   // Upload as unlisted first
   const publishResult = await uploadVideo(oauthPath, {
