@@ -217,7 +217,7 @@ async function startProduction() {
 
     const dur = document.getElementById('produce-duration').value;
     const seg = document.getElementById('produce-segments').value;
-    if (dur) body.durationHours = parseFloat(dur);
+    if (dur) body.durationMinutes = parseInt(dur, 10);
     if (seg) body.segmentCount = parseInt(seg, 10);
   } else {
     const topic = document.getElementById('produce-topic').value.trim();
@@ -235,6 +235,7 @@ async function startProduction() {
     if (isMusicOnly) {
       document.getElementById('produce-image-concept').value = '';
       document.getElementById('produce-music-concept').value = '';
+      document.getElementById('produce-bpm').value = '';
       document.getElementById('produce-music-category').value = '';
       document.getElementById('produce-modifier').value = '';
       document.getElementById('produce-duration').value = '';
@@ -244,6 +245,7 @@ async function startProduction() {
       promptOverrides = { image: null, music: null, animation: null };
       pickerSelectedCategory = null;
       pickerSelectedModifier = null;
+      pickerSelectedSubject = 'A';
     }
     if (res.status === 'pending_script') {
       toast(`Production created — waiting for @script-writer (${res.productionId})`);
@@ -452,6 +454,7 @@ document.getElementById('new-channel-form').addEventListener('submit', async (e)
 // === Category Picker ===
 let pickerSelectedCategory = null;
 let pickerSelectedModifier = null;
+let pickerSelectedSubject = 'A'; // 'A' or 'B'
 
 function openCategoryPicker() {
   const overlay = document.getElementById('category-picker-overlay');
@@ -481,8 +484,16 @@ function openCategoryPicker() {
             </div>
             <div class="picker-cat-details">
               <div><span>Scene:</span> ${cat.scene}</div>
-              <div><span>Subject A:</span> ${cat.subjectA}</div>
-              <div><span>Subject B:</span> ${cat.subjectB}</div>
+              <div class="picker-subject-choice" onclick="event.stopPropagation()" style="margin:6px 0;display:flex;gap:12px;">
+                <label style="display:flex;align-items:flex-start;gap:6px;cursor:pointer;flex:1;">
+                  <input type="radio" name="subject-${cat.id}" value="A" ${pickerSelectedCategory === cat.id && pickerSelectedSubject === 'B' ? '' : 'checked'} onchange="selectSubject('A')" style="accent-color:var(--accent);margin-top:3px;">
+                  <span><strong>A:</strong> ${cat.subjectA}</span>
+                </label>
+                <label style="display:flex;align-items:flex-start;gap:6px;cursor:pointer;flex:1;">
+                  <input type="radio" name="subject-${cat.id}" value="B" ${pickerSelectedCategory === cat.id && pickerSelectedSubject === 'B' ? 'checked' : ''} onchange="selectSubject('B')" style="accent-color:var(--accent);margin-top:3px;">
+                  <span><strong>B:</strong> ${cat.subjectB}</span>
+                </label>
+              </div>
               <div><span>Palette:</span> ${cat.palette}</div>
               <div style="margin-top:4px;border-top:1px solid var(--border);padding-top:4px;">
                 <div><span>Music Mood:</span> ${cat.musicMood}</div>
@@ -539,6 +550,10 @@ function selectCategory(catId, groupId, el) {
   }
 }
 
+function selectSubject(choice) {
+  pickerSelectedSubject = choice;
+}
+
 function selectModifier(checkbox, modName) {
   // Only allow one modifier at a time
   document.querySelectorAll('.picker-mod input[type="checkbox"]').forEach((cb) => {
@@ -550,12 +565,14 @@ function selectModifier(checkbox, modName) {
 function confirmCategoryPicker() {
   document.getElementById('produce-music-category').value = pickerSelectedCategory || '';
   document.getElementById('produce-modifier').value = pickerSelectedModifier || '';
+  document.getElementById('produce-subject').value = pickerSelectedSubject || 'A';
 
   // Update display text
   let text = '';
   if (pickerSelectedCategory) {
     const cat = CATEGORY_GROUPS.flatMap((g) => g.categories).find((c) => c.id === pickerSelectedCategory);
     text = cat ? cat.name : pickerSelectedCategory;
+    text += ` (Subject ${pickerSelectedSubject})`;
     if (pickerSelectedModifier) {
       text += ` + ${pickerSelectedModifier}`;
     }
@@ -569,6 +586,7 @@ function confirmCategoryPicker() {
 function clearCategoryPicker() {
   pickerSelectedCategory = null;
   pickerSelectedModifier = null;
+  pickerSelectedSubject = 'A';
   document.querySelectorAll('.picker-cat').forEach((c) => {
     c.classList.remove('selected');
     const radio = c.querySelector('input[type="radio"]');
@@ -588,7 +606,8 @@ let promptOverrides = { image: null, music: null, animation: null };
 function getSelectedCatAndMod() {
   const catId = document.getElementById('produce-music-category').value;
   const modName = document.getElementById('produce-modifier').value;
-  if (!catId) return { cat: null, mod: null };
+  const subject = document.getElementById('produce-subject').value || 'A';
+  if (!catId) return { cat: null, mod: null, subject: 'A' };
 
   const cat = CATEGORY_GROUPS.flatMap((g) => g.categories).find((c) => c.id === catId);
   let mod = null;
@@ -598,11 +617,11 @@ function getSelectedCatAndMod() {
       if (found) { mod = found; break; }
     }
   }
-  return { cat, mod };
+  return { cat, mod, subject };
 }
 
 function updatePromptPreview() {
-  const { cat, mod } = getSelectedCatAndMod();
+  const { cat, mod, subject } = getSelectedCatAndMod();
   const preview = document.getElementById('prompt-preview');
 
   if (!cat) {
@@ -614,9 +633,10 @@ function updatePromptPreview() {
 
   const imageConcept = document.getElementById('produce-image-concept').value.trim();
   const musicConcept = document.getElementById('produce-music-concept').value.trim();
+  const bpmOverride = document.getElementById('produce-bpm').value.trim() || null;
 
-  const imagePrompt = buildImagePrompt(cat, mod, imageConcept);
-  const musicPrompt = buildMusicPromptFromSelection(cat, musicConcept);
+  const imagePrompt = buildImagePrompt(cat, mod, imageConcept, subject);
+  const musicPrompt = buildMusicPromptFromSelection(cat, musicConcept, bpmOverride);
   const animPrompt = buildAnimationPrompt(cat, mod, imageConcept);
 
   // Only update preview text if not overridden
@@ -658,15 +678,16 @@ function togglePromptEdit(type) {
 
 function markOverride(type) {
   const overrideEl = document.getElementById(`prompt-${type}-override`);
-  const { cat, mod } = getSelectedCatAndMod();
+  const { cat, mod, subject } = getSelectedCatAndMod();
   const imageConcept = document.getElementById('produce-image-concept').value.trim();
   const musicConcept = document.getElementById('produce-music-concept').value.trim();
+  const bpmOverride = document.getElementById('produce-bpm').value.trim() || null;
 
   // Check if text differs from auto-generated
   let autoPrompt = '';
   if (cat) {
-    if (type === 'image') autoPrompt = buildImagePrompt(cat, mod, imageConcept);
-    if (type === 'music') autoPrompt = buildMusicPromptFromSelection(cat, musicConcept);
+    if (type === 'image') autoPrompt = buildImagePrompt(cat, mod, imageConcept, subject);
+    if (type === 'music') autoPrompt = buildMusicPromptFromSelection(cat, musicConcept, bpmOverride);
     if (type === 'animation') autoPrompt = buildAnimationPrompt(cat, mod, imageConcept);
   }
 
@@ -680,15 +701,16 @@ function markOverride(type) {
 }
 
 function getPrompts() {
-  const { cat, mod } = getSelectedCatAndMod();
+  const { cat, mod, subject } = getSelectedCatAndMod();
   const imageConcept = document.getElementById('produce-image-concept').value.trim();
   const musicConcept = document.getElementById('produce-music-concept').value.trim();
+  const bpmOverride = document.getElementById('produce-bpm').value.trim() || null;
 
   if (!cat) return { imagePrompt: imageConcept, musicPrompt: musicConcept, animationPrompt: imageConcept };
 
   return {
-    imagePrompt: promptOverrides.image || buildImagePrompt(cat, mod, imageConcept),
-    musicPrompt: promptOverrides.music || buildMusicPromptFromSelection(cat, musicConcept),
+    imagePrompt: promptOverrides.image || buildImagePrompt(cat, mod, imageConcept, subject),
+    musicPrompt: promptOverrides.music || buildMusicPromptFromSelection(cat, musicConcept, bpmOverride),
     animationPrompt: promptOverrides.animation || buildAnimationPrompt(cat, mod, imageConcept),
   };
 }

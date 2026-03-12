@@ -1,7 +1,7 @@
 # Music Framework
 
 > This file defines how `@asset-producer` generates music for all channel types.
-> Music is generated via Sonauto (`shared/sonauto.ts`).
+> Music is generated via Stable Audio 2.5 on Replicate (`src/services/replicate-audio-service.ts`).
 > Track A: one background track per video, sits under VO, fresh generation per video.
 > Track B: one ~30-minute track per segment, the primary content of the video.
 
@@ -32,37 +32,31 @@ The agent combines both sources. Channel framework sets the outer boundaries. Pe
 
 ---
 
-## Sonauto Prompt Construction
+## Stable Audio 2.5 Prompt Construction
 
-### Track A Prompt Template
+Stable Audio 2.5 works best with concise, natural-language prompts. No labeled sections — just a comma-separated description.
 
-```
-[GENRE + STYLE]: [Primary genre from channel framework] with [style descriptors]
-[MOOD]: [Primary mood from production brief] — [supporting mood if applicable]
-[ENERGY]: [Energy level: ambient / low / gentle / moderate — never high for background VO music]
-[INSTRUMENTATION]: [Primary instruments] — [supporting elements] — [avoid list]
-[TEMPO]: [Slow / gentle / steady — specify BPM range if known: 60–80 BPM typical for background]
-[DYNAMICS]: Subtle dynamic variation — no sudden drops or surges that would compete with VO
-[STRUCTURE]: No lyrics. No prominent melodic hook that demands attention.
-             Background presence only — the music should feel like the room, not the performance.
-[DURATION]: [Target duration in minutes — match to estimated video length]
-[AVOID]: [From production brief avoid list + channel framework constraints]
-```
-
-### Track B Prompt Template
+### Track A Prompt Template (background under VO)
 
 ```
-[GENRE + STYLE]: [Primary genre from channel framework] with [style descriptors]
-[MOOD]: [Session music concept mood] within [channel framework emotional range]
-[ENERGY]: [Energy level appropriate to genre — see category defaults below]
-[INSTRUMENTATION]: [Primary instruments] — [supporting elements] — [avoid list]
-[TEMPO]: [BPM range appropriate to genre — see category defaults below]
-[DYNAMICS]: Gradual evolution over the full duration — subtle arc from opening to close.
-            No jarring transitions. No sudden energy shifts. Continuous immersive flow.
-[STRUCTURE]: No lyrics. Extended ambient/generative structure.
-             Target: approximately 30 minutes of continuous seamless music.
-[AVOID]: [Channel framework avoid list + anything from session input that conflicts]
+[Category name] instrumental, [primary instruments], [BPM] BPM, [user direction if any], no lyrics, background ambient
 ```
+
+Example: `Lofi Study instrumental, lo-fi piano, soft drums, vinyl crackle, 75 BPM, no lyrics, background ambient`
+
+### Track B Prompt Template (primary content, music-only channels)
+
+```
+[Category name] instrumental, [primary instruments], [BPM] BPM, [user direction if any], no lyrics
+```
+
+Example: `Synthwave instrumental, synthesizer arpeggios, gated reverb drums, bass synth, 110 BPM, driving neon-lit mood, no lyrics`
+
+### Key rules
+- Max 190 seconds per generation — loop or stitch for longer durations
+- Keep prompts under 200 characters for best results
+- Comma-separated natural language, not labeled fields
+- Genre + instruments + tempo + mood is the core formula
 
 ---
 
@@ -250,7 +244,7 @@ GENRE NOTES: [any video-specific genre shift within the channel framework]
 ARC: [how the music should evolve over the video — e.g. "builds slightly in middle third, returns to quiet for outro"]
 ```
 
-Agent reads this block, merges with channel framework defaults above, and constructs the Sonauto prompt.
+Agent reads this block, merges with channel framework defaults above, and constructs the Stable Audio 2.5 prompt.
 
 **Conflict rule:** If production brief energy level conflicts with channel framework (e.g. brief says moderate but framework is dark ambient), agent uses the lower energy level and notes the conflict in the session log.
 

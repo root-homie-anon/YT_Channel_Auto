@@ -22,9 +22,10 @@ import {
 import { generateProductionId, writeJsonFile } from '../utils/file-helpers.js';
 import { createLogger } from '../utils/logger.js';
 
-import { generateBatchImages } from './flux-service.js';
+import { generateBatchImages, generateImage } from './flux-service.js';
 import { generateVoiceover } from './elevenlabs-service.js';
 import { generateMusicElevenLabs } from './elevenlabs-music-service.js';
+import { generateMusic as generateMusicStableAudio } from './replicate-audio-service.js';
 import { generateAnimation } from './runway-service.js';
 import { findFootageForCues, downloadClip } from './archive-service.js';
 import {
@@ -72,7 +73,7 @@ export async function runPipeline(
     // Stage: Asset Generation
     await updateStage(status, 'asset_generation', outputDir);
     log.info('Starting asset generation');
-    const assetResult = await generateAssets(config, channelDir, outputDir, scriptOutput);
+    const assetResult = await generateAssets(config, channelDir, outputDir, scriptOutput, contentPlan);
     context.assetManifest = assetResult.manifest;
     await writeJsonFile(join(outputDir, 'asset-manifest.json'), context.assetManifest);
 
@@ -156,11 +157,30 @@ interface AssetGenerationResult {
   teaserManifest?: AssetManifest | undefined;
 }
 
+// -- Segment diversity pools for music-only multi-segment --
+const SHOT_VARIATIONS = [
+  'wide establishing shot',
+  'medium shot',
+  'close-up detail',
+  'low angle looking up',
+  'aerial overhead view',
+  'over-the-shoulder perspective',
+];
+
+const TIME_PROGRESSION = [
+  'golden hour warm light',
+  'twilight fading sky',
+  'night scene',
+  'deep night, minimal light',
+  'pre-dawn blue hour',
+];
+
 async function generateAssets(
   config: ChannelConfig,
   channelDir: string,
   outputDir: string,
-  scriptOutput: ScriptOutput
+  scriptOutput: ScriptOutput,
+  contentPlan?: ContentPlan,
 ): Promise<AssetGenerationResult> {
   const imageFramework = await loadFramework(channelDir, config.frameworks.image);
   const musicFramework = await loadFramework(channelDir, config.frameworks.music);
@@ -175,8 +195,71 @@ async function generateAssets(
     animations: [],
   };
 
+  // ========== MUSIC-ONLY: Multi-segment pipeline ==========
+  if (isMusicOnly && contentPlan) {
+    const segmentCount = contentPlan.segmentCount ?? 1;
+    const totalDuration = contentPlan.targetDurationSeconds;
+    const segmentDuration = Math.floor(totalDuration / segmentCount);
+    const musicDuration = Math.min(segmentDuration, 120); // Stable Audio max ~190s, use 120s
+    const prompts = contentPlan.musicOnlyPrompts;
+
+    log.info(`Music-only pipeline: ${segmentCount} segment(s), ${segmentDuration}s each, ${totalDuration}s total`);
+
+    for (let i = 0; i < segmentCount; i++) {
+      const pad = String(i).padStart(3, '0');
+      const shot = SHOT_VARIATIONS[i % SHOT_VARIATIONS.length];
+      const time = TIME_PROGRESSION[i % TIME_PROGRESSION.length];
+
+      // -- Image: apply diversity modifiers to base prompt --
+      const baseImagePrompt = prompts?.imagePrompt ?? scriptOutput.script[0]?.imageCue ?? contentPlan.topic;
+      const diverseImagePrompt = `${baseImagePrompt}. ${shot}, ${time}`;
+      log.info(`Segment ${i}: image prompt = "${diverseImagePrompt.slice(0, 80)}..."`);
+
+      const imageAsset = await generateImage({
+        prompt: diverseImagePrompt,
+        outputPath: join(outputDir, 'images', `image-${pad}.png`),
+      });
+      manifest.images.push(imageAsset);
+
+      // -- Animation: Runway ML --
+      if (process.env.RUNWAY_API_KEY) {
+        try {
+          const imageData = await readFile(imageAsset.path);
+          const base64 = imageData.toString('base64');
+          const dataUri = `data:image/png;base64,${base64}`;
+          const animPrompt = prompts?.animationPrompt ?? 'Subtle slow cinematic motion, loop-friendly';
+
+          const animAsset = await generateAnimation({
+            imageUrl: dataUri,
+            prompt: animPrompt,
+            durationSeconds: 4,
+            outputPath: join(outputDir, 'animations', `anim-${pad}.mp4`),
+          });
+          manifest.animations.push(animAsset);
+        } catch (err) {
+          log.warn(`Animation ${i} failed (non-fatal): ${(err as Error).message}`);
+        }
+      }
+
+      // -- Music: Stable Audio 2.5 --
+      const musicPromptText = prompts?.musicPrompt ?? buildMusicPrompt(scriptOutput, musicFramework, musicDuration);
+      log.info(`Segment ${i}: music prompt = "${musicPromptText.slice(0, 80)}..." (${musicDuration}s)`);
+
+      const musicAsset = await generateMusicStableAudio({
+        prompt: musicPromptText,
+        durationSeconds: musicDuration,
+        outputPath: join(outputDir, 'music', `music-${pad}.wav`),
+      });
+      manifest.music.push(musicAsset);
+
+      log.info(`Segment ${i} complete: image + animation + music`);
+    }
+
+    return { manifest };
+  }
+
+  // ========== NARRATED: Original pipeline ==========
   // Generate images from script cues
-  // For long+short and short formats, also generate 9:16 portrait variants
   const imageCues = scriptOutput.script.map((section, i) => ({
     id: `section-${i}`,
     prompt: section.imageCue,
@@ -192,8 +275,7 @@ async function generateAssets(
     manifest.portraitImages = imageResults.portrait;
   }
 
-  // Search Archive.org for relevant stock footage to supplement generated images
-  // Only downloads clips for sections where real footage matches the content
+  // Search Archive.org for relevant stock footage
   try {
     const cuesForSearch = scriptOutput.script.map((s, i) => ({
       index: i,
@@ -209,7 +291,6 @@ async function generateAssets(
       for (const [sectionIdx, clip] of footageMatches) {
         try {
           const asset = await downloadClip(clip, stockDir);
-          // Store as stockFootage in manifest for FFmpeg to use
           if (!manifest.stockFootage) {
             manifest.stockFootage = [];
           }
@@ -230,46 +311,17 @@ async function generateAssets(
     log.warn(`Stock footage search failed (non-fatal): ${(stockErr as Error).message}`);
   }
 
-  // Runway ML animation — music-only channels ONLY
-  // Long/short formats use Ken Burns (FFmpeg zoompan) instead
-  if (isMusicOnly && manifest.images.length > 0 && process.env.RUNWAY_API_KEY) {
-    log.info(`Generating Runway ML animations for ${manifest.images.length} images (music-only)`);
-    for (let i = 0; i < manifest.images.length; i++) {
-      const image = manifest.images[i];
-      const section = scriptOutput.script[i];
-      try {
-        const imageData = await readFile(image.path);
-        const base64 = imageData.toString('base64');
-        const mimeType = image.path.endsWith('.png') ? 'image/png' : 'image/jpeg';
-        const dataUri = `data:${mimeType};base64,${base64}`;
-
-        const animAsset = await generateAnimation({
-          imageUrl: dataUri,
-          prompt: section?.imageCue ?? 'Subtle slow cinematic motion',
-          durationSeconds: 4,
-          outputPath: join(outputDir, 'animations', `anim-${String(i).padStart(3, '0')}.mp4`),
-        });
-        manifest.animations.push(animAsset);
-      } catch (err) {
-        log.warn(`Animation ${i} failed (non-fatal): ${(err as Error).message}`);
-      }
-    }
-  }
-
-  // Generate single voiceover from full script (skip for music-only)
-  if (!isMusicOnly) {
-    const fullNarration = scriptOutput.script.map((s) => s.narration).join('\n\n');
-    const voAsset = await generateVoiceover({
-      text: fullNarration,
-      voiceId: config.credentials.elevenLabsVoiceId,
-      outputPath: join(outputDir, 'voiceover', 'full-narration.mp3'),
-    });
-    manifest.voiceover = [voAsset];
-  }
+  // Generate single voiceover from full script
+  const fullNarration = scriptOutput.script.map((s) => s.narration).join('\n\n');
+  const voAsset = await generateVoiceover({
+    text: fullNarration,
+    voiceId: config.credentials.elevenLabsVoiceId,
+    outputPath: join(outputDir, 'voiceover', 'full-narration.mp3'),
+  });
+  manifest.voiceover = [voAsset];
 
   // Generate 2-min music segment via ElevenLabs — FFmpeg loops it to fill the video
   const musicPrompt = buildMusicPrompt(scriptOutput, musicFramework, 120);
-
   const musicAsset = await generateMusicElevenLabs({
     prompt: musicPrompt,
     durationSeconds: 120,
@@ -289,7 +341,6 @@ async function generateAssets(
       outputPath: join(outputDir, 'teaser', 'teaser-narration.mp3'),
     });
 
-    // Teaser manifest: use portrait images for shorts if available, otherwise fall back to landscape
     const teaserImageCount = Math.min(scriptOutput.teaserScript.length, manifest.images.length);
     const portraitAvailable = manifest.portraitImages && manifest.portraitImages.length > 0;
     teaserManifest = {
@@ -297,7 +348,7 @@ async function generateAssets(
         ? manifest.portraitImages!.slice(0, teaserImageCount)
         : manifest.images.slice(0, teaserImageCount),
       voiceover: [teaserVoAsset],
-      music: manifest.music, // reuse same music
+      music: manifest.music,
       animations: [],
     };
   }

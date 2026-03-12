@@ -172,17 +172,17 @@ const CATEGORY_GROUPS = [
     modifierRule: 'Group 4 modifiers only',
     categories: [
       {
-        id: 'synthwave-retrowave', name: 'Synthwave / Retrowave',
-        scene: 'Elevated highway stretching to vanishing point — neon grid lines on road, massive retro-futuristic skyline, low-hanging full moon in pink and orange haze',
-        subjectA: 'Road surface with neon grid lines moving continuously toward viewer — sensation of forward motion, subtle chromatic aberration',
+        id: 'synthwave', name: 'Synthwave',
+        scene: 'Elevated monorail stretching to vanishing point — neon grid lines on city below, massive retro-futuristic skyline, low-hanging full moon',
+        subjectA: 'A cyberpunk kid sitting on the monorail gazing into the massive retro-futuristic skyline',
         subjectB: 'Skyline buildings on both sides — windows lit in neon pink and blue, occasional slow-moving blimp with blinking lights',
-        animIntent: 'Grid line movement perfect seamless loop toward viewer. Building neon lights pulse independently. Aircraft blinks on slow cycle.',
-        palette: 'Hot pink, electric blue, deep purple, neon orange horizon, near-black sky',
+        animIntent: 'Subtle animation, loop friendly',
+        palette: 'Neon lights, deep pinks, purples and blues, deep shadows, HDR',
         avoid: 'Daylight, organic natural elements, muted colors, anything soft or rounded, warm earth tones',
-        musicEnergy: 'Medium — driving but hypnotic, not aggressive', musicBPM: '100–120',
-        musicMood: 'Nostalgic / driving / neon-lit / 80s forward motion / cinematic night',
-        musicInstrumentation: 'Synthesizer arpeggios, gated reverb drums, bass synth, lead synth with slow attack, occasional saxophone or electric guitar. All analog-flavored.',
-        musicAvoid: 'Acoustic instruments, organic textures, anything pre-80s, anything overly modern or digitally clean',
+        musicEnergy: 'Electronic, Drum Machine, Bass, Lush Synthesizer Pads, Synthesizer Arp, Synth Bass, Melancholic, Vibe, Cool, Modern, Atmospheric, well-arranged composition, 115 BPM', musicBPM: '115',
+        musicMood: '',
+        musicInstrumentation: 'Electronic, Drum Machine, Bass, Lush Synthesizer Pads, Synthesizer Arp, Synth Bass, Melancholic, Vibe, Cool, Modern, Atmospheric, well-arranged composition, 115 BPM',
+        musicAvoid: '',
       },
       {
         id: 'dark-electronic', name: 'Dark Electronic',
@@ -274,44 +274,92 @@ const UNIVERSE_MODIFIERS = {
   ],
 };
 
-// -- Prompt builders --
+// -- Segment diversity pools --
 
-function buildImagePrompt(cat, mod, userImageConcept) {
-  const artStyle = mod ? mod.artStyle : 'photorealistic';
-  const worldContext = mod ? mod.envShift : cat.scene;
-  const lighting = mod ? mod.colorShift : cat.palette;
+const SHOT_VARIATIONS = [
+  'wide establishing shot',
+  'medium shot',
+  'close-up detail',
+  'low angle looking up',
+  'aerial overhead view',
+  'over-the-shoulder perspective',
+];
 
-  return [
-    `${cat.subjectA} in ${cat.scene}.`,
-    mod ? `World: ${mod.envShift}.` : '',
-    `Art style: ${artStyle}.`,
-    `Mood and atmosphere: ${cat.musicMood}.`,
-    `Lighting and palette: ${lighting}.`,
-    `${cat.subjectB}.`,
-    userImageConcept ? `Additional direction: ${userImageConcept}.` : '',
-    `Composition: Single focal point. Subject dominant. Negative space where needed.`,
-    `16:9 aspect ratio, high detail, cinematic quality, loop-friendly composition.`,
-    `Avoid: ${cat.avoid}.`,
-  ].filter(Boolean).join(' ');
+const TIME_PROGRESSION = [
+  'golden hour warm light',
+  'twilight fading sky',
+  'night scene',
+  'deep night, minimal light',
+  'pre-dawn blue hour',
+];
+
+// Build unique prompts per segment using rotation pools
+function buildSegmentPrompts(cat, mod, userImageConcept, userMusicConcept, bpmOverride, segmentCount) {
+  const segments = [];
+  for (let i = 0; i < segmentCount; i++) {
+    const shot = SHOT_VARIATIONS[i % SHOT_VARIATIONS.length];
+    const time = TIME_PROGRESSION[i % TIME_PROGRESSION.length];
+    const subject = (i % 2 === 0) ? 'A' : 'B';
+
+    const imagePrompt = buildImagePrompt(cat, mod, userImageConcept, subject, shot, time);
+    const animPrompt = buildAnimationPrompt(cat, mod, userImageConcept);
+    const musicPrompt = buildMusicPromptFromSelection(cat, userMusicConcept, bpmOverride);
+
+    segments.push({
+      index: i,
+      shot,
+      time,
+      subject,
+      imagePrompt,
+      animationPrompt: animPrompt,
+      musicPrompt,
+    });
+  }
+  return segments;
+}
+
+// -- Prompt builders (simplified for Flux + Runway + Stable Audio 2.5) --
+
+function buildImagePrompt(cat, mod, userImageConcept, subject, shot, time) {
+  // Modifier fully overrides category visuals when selected
+  const style = mod ? mod.artStyle : 'photorealistic';
+  const palette = mod ? mod.colorShift : cat.palette;
+  const scene = mod ? mod.envShift : cat.scene;
+  const subjectDesc = (subject === 'B') ? cat.subjectB : cat.subjectA;
+
+  const parts = [`${subjectDesc}, ${scene}`];
+  if (shot) parts.push(shot);
+  if (time) parts.push(time);
+  if (userImageConcept) parts.push(userImageConcept);
+  parts.push(`${style}, ${palette}`);
+  parts.push('16:9, cinematic, high detail');
+  return parts.join('. ') + '.';
 }
 
 function buildAnimationPrompt(cat, mod, userImageConcept) {
-  return [
-    cat.animIntent,
-    mod ? `Environment styled as ${mod.name}: ${mod.envShift}.` : '',
-    userImageConcept ? `Direction: ${userImageConcept}.` : '',
-    'Subtle, slow, loop-friendly. No abrupt motion.',
-  ].filter(Boolean).join(' ');
+  // Modifier overrides — don't mix category animIntent with modifier world
+  const motion = mod ? `Slow ambient motion in ${mod.name} environment` : cat.animIntent;
+  const parts = [motion];
+  if (userImageConcept) parts.push(userImageConcept);
+  parts.push('Slow, subtle, loop-friendly');
+  return parts.join('. ') + '.';
 }
 
-function buildMusicPromptFromSelection(cat, userMusicConcept) {
-  return [
-    `${cat.name} instrumental.`,
-    `${cat.musicInstrumentation}`,
-    `Mood: ${cat.musicMood}.`,
-    `Energy: ${cat.musicEnergy}. Tempo: ${cat.musicBPM}.`,
-    userMusicConcept ? `Direction: ${userMusicConcept}.` : '',
-    `No lyrics. Extended ambient/generative structure. Continuous seamless flow.`,
-    `Avoid: ${cat.musicAvoid}.`,
-  ].filter(Boolean).join(' ');
+function buildMusicPromptFromSelection(cat, userMusicConcept, bpmOverride) {
+  // Stable Audio 2.5: natural language, concise
+  // musicInstrumentation is the main prompt — swap BPM if overridden
+  let instrumentation = cat.musicInstrumentation;
+  if (bpmOverride && instrumentation.includes('BPM')) {
+    instrumentation = instrumentation.replace(/\d+\s*BPM/, `${bpmOverride} BPM`);
+  }
+
+  const parts = [`${cat.name} instrumental`];
+  parts.push(instrumentation);
+  if (!instrumentation.includes('BPM')) {
+    const bpm = bpmOverride || cat.musicBPM;
+    if (bpm && bpm !== 'No tempo') parts.push(`${bpm} BPM`);
+  }
+  if (userMusicConcept) parts.push(userMusicConcept);
+  parts.push('No lyrics');
+  return parts.join(', ') + '.';
 }

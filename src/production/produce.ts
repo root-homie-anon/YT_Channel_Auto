@@ -27,7 +27,7 @@ export interface ProductionSetup {
 }
 
 export interface ProductionOptions {
-  durationHours?: number;
+  durationMinutes?: number;
   segmentCount?: number;
 }
 
@@ -58,8 +58,8 @@ export async function setupProduction(
     angle: '',
     keyPoints: [],
     targetDurationSeconds:
-      config.channel.format === 'music-only' && options?.durationHours
-        ? options.durationHours * 3600
+      config.channel.format === 'music-only' && options?.durationMinutes
+        ? options.durationMinutes * 60
         : config.channel.format === 'music-only' ? 3600 : 600,
     format: config.channel.format,
   };

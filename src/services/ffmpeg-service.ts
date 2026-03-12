@@ -355,83 +355,131 @@ export async function compileMusicOnlyVideo(
   await ensureDir(outputDir);
   const videoPath = join(outputDir, 'music-video.mp4');
   const [width, height] = resolution.split('x');
+  const segmentCount = manifest.music.length;
 
-  log.info('Compiling music-only video');
+  log.info(`Compiling music-only video: ${segmentCount} segment(s)`);
 
   try {
-    const hasAnimations = manifest.animations.length > 0;
+    if (segmentCount > 1) {
+      // -- Multi-segment: compile each segment, then concatenate --
+      const segmentPaths: string[] = [];
 
-    if (hasAnimations && manifest.music.length > 0) {
-      // Use Runway ML animation clips — concatenate and loop to fill music duration
-      log.info(`Using ${manifest.animations.length} Runway ML animation clips`);
-      const inputArgs: string[] = [];
-      const filterParts: string[] = [];
+      for (let i = 0; i < segmentCount; i++) {
+        const pad = String(i).padStart(3, '0');
+        const segPath = join(outputDir, `segment-${pad}.mp4`);
+        const hasAnim = manifest.animations[i];
+        const music = manifest.music[i];
+        const image = manifest.images[i];
 
-      for (let i = 0; i < manifest.animations.length; i++) {
-        inputArgs.push('-i', manifest.animations[i].path);
-        filterParts.push(
-          `[${i}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-          `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1[v${i}]`
-        );
+        if (hasAnim && music) {
+          // Animation looped to fill music duration
+          const ffmpegArgs = [
+            '-stream_loop', '-1', '-i', hasAnim.path,
+            '-i', music.path,
+            '-filter_complex',
+            `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+            `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[vout]`,
+            '-map', '[vout]', '-map', '1:a',
+            '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+            '-c:a', 'aac', '-b:a', '192k',
+            '-shortest', '-movflags', '+faststart',
+            '-y', segPath,
+          ];
+          await runFfmpeg(ffmpegArgs);
+        } else if (image && music) {
+          // Static image looped for music duration
+          const ffmpegArgs = [
+            '-loop', '1', '-i', image.path,
+            '-i', music.path,
+            '-filter_complex',
+            `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+            `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[vout]`,
+            '-map', '[vout]', '-map', '1:a',
+            '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+            '-c:a', 'aac', '-b:a', '192k',
+            '-shortest', '-movflags', '+faststart',
+            '-y', segPath,
+          ];
+          await runFfmpeg(ffmpegArgs);
+        }
+
+        segmentPaths.push(segPath);
+        log.info(`Segment ${i} compiled: ${segPath}`);
       }
 
-      const musicIdx = manifest.animations.length;
-      inputArgs.push('-i', manifest.music[0].path);
+      // Concatenate all segments with crossfade
+      if (segmentPaths.length === 1) {
+        const { copyFile } = await import('fs/promises');
+        await copyFile(segmentPaths[0], videoPath);
+      } else {
+        // Write concat list file
+        const concatList = segmentPaths.map((p) => `file '${p}'`).join('\n');
+        const concatPath = join(outputDir, 'concat-list.txt');
+        const { writeFile } = await import('fs/promises');
+        await writeFile(concatPath, concatList);
 
-      // Concatenate all animation clips, then loop to fill music length
-      const videoConcat = manifest.animations.map((_, i) => `[v${i}]`).join('');
-      filterParts.push(
-        `${videoConcat}concat=n=${manifest.animations.length}:v=1:a=0[vcombined]`,
-        `[vcombined]loop=-1:size=32767:start=0,fps=30[vout]`
-      );
+        const ffmpegArgs = [
+          '-f', 'concat', '-safe', '0', '-i', concatPath,
+          '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+          '-c:a', 'aac', '-b:a', '192k',
+          '-movflags', '+faststart',
+          '-y', videoPath,
+        ];
+        await runFfmpeg(ffmpegArgs);
+      }
+    } else {
+      // -- Single segment: original logic --
+      const hasAnimations = manifest.animations.length > 0;
 
-      const ffmpegArgs = [
-        ...inputArgs,
-        '-filter_complex', filterParts.join(';'),
-        '-map', '[vout]',
-        '-map', `${musicIdx}:a`,
-        '-c:v', 'libx264',
-        '-preset', 'medium',
-        '-crf', '23',
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-shortest',
-        '-movflags', '+faststart',
-        '-y',
-        videoPath,
-      ];
+      if (hasAnimations && manifest.music.length > 0) {
+        const inputArgs: string[] = [];
+        const filterParts: string[] = [];
 
-      await runFfmpeg(ffmpegArgs);
-    } else if (manifest.images.length > 0 && manifest.music.length > 0) {
-      // Fallback: static image looped for music duration (no animations available)
-      const inputArgs: string[] = [];
-      const filterParts: string[] = [];
+        for (let i = 0; i < manifest.animations.length; i++) {
+          inputArgs.push('-i', manifest.animations[i].path);
+          filterParts.push(
+            `[${i}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+            `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1[v${i}]`
+          );
+        }
 
-      inputArgs.push('-loop', '1', '-i', manifest.images[0].path);
-      inputArgs.push('-i', manifest.music[0].path);
+        const musicIdx = manifest.animations.length;
+        inputArgs.push('-i', manifest.music[0].path);
 
-      filterParts.push(
-        `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-        `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[vout]`
-      );
+        const videoConcat = manifest.animations.map((_, i) => `[v${i}]`).join('');
+        filterParts.push(
+          `${videoConcat}concat=n=${manifest.animations.length}:v=1:a=0[vcombined]`,
+          `[vcombined]loop=-1:size=32767:start=0,fps=30[vout]`
+        );
 
-      const ffmpegArgs = [
-        ...inputArgs,
-        '-filter_complex', filterParts.join(';'),
-        '-map', '[vout]',
-        '-map', '1:a',
-        '-c:v', 'libx264',
-        '-preset', 'medium',
-        '-crf', '23',
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-shortest',
-        '-movflags', '+faststart',
-        '-y',
-        videoPath,
-      ];
+        const ffmpegArgs = [
+          ...inputArgs,
+          '-filter_complex', filterParts.join(';'),
+          '-map', '[vout]',
+          '-map', `${musicIdx}:a`,
+          '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+          '-c:a', 'aac', '-b:a', '192k',
+          '-shortest', '-movflags', '+faststart',
+          '-y', videoPath,
+        ];
 
-      await runFfmpeg(ffmpegArgs);
+        await runFfmpeg(ffmpegArgs);
+      } else if (manifest.images.length > 0 && manifest.music.length > 0) {
+        const ffmpegArgs = [
+          '-loop', '1', '-i', manifest.images[0].path,
+          '-i', manifest.music[0].path,
+          '-filter_complex',
+          `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+          `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[vout]`,
+          '-map', '[vout]', '-map', '1:a',
+          '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+          '-c:a', 'aac', '-b:a', '192k',
+          '-shortest', '-movflags', '+faststart',
+          '-y', videoPath,
+        ];
+
+        await runFfmpeg(ffmpegArgs);
+      }
     }
 
     const stats = await stat(videoPath);

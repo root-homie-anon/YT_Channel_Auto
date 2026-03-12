@@ -29,7 +29,7 @@ const router = Router();
 router.post('/:slug/produce', async (req: Request, res: Response) => {
   try {
     const slug = req.params.slug as string;
-    const { topic, scriptOutput, durationHours, segmentCount } = req.body;
+    const { topic, scriptOutput, durationMinutes, segmentCount, imagePrompt, musicPrompt, animationPrompt } = req.body;
 
     if (!topic) {
       res.status(400).json({ error: 'topic is required' });
@@ -52,17 +52,25 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
     const outputDir = join(PROJECT_ROOT, 'projects', slug, 'output', productionId);
     await ensureDir(outputDir);
 
-    const plan = buildContentPlan(topic, config, { durationHours, segmentCount });
+    const plan = buildContentPlan(topic, config, { durationMinutes, segmentCount, imagePrompt, musicPrompt, animationPrompt });
     await writeJsonFile(join(outputDir, 'content-plan.json'), plan);
 
-    if (scriptOutput) {
-      // Script already provided — start pipeline immediately
-      await saveScriptOutput(outputDir, scriptOutput);
+    // Music-only channels don't need a script — auto-start with stub
+    const isMusicOnly = config.channel.format === 'music-only';
+    const resolvedScript: ScriptOutput = scriptOutput ?? (isMusicOnly ? {
+      title: topic,
+      description: topic,
+      tags: [],
+      script: [{ sectionName: 'main', narration: '', imageCue: imagePrompt || topic }],
+    } : null);
+
+    if (resolvedScript) {
+      await saveScriptOutput(outputDir, resolvedScript);
 
       registerPipeline(slug, productionId, topic);
       startPipelineWatcher(slug, productionId);
 
-      runPipeline(slug, plan, scriptOutput, productionId)
+      runPipeline(slug, plan, resolvedScript, productionId)
         .catch((err) => {
           console.error(`Pipeline failed for ${slug}:`, (err as Error).message);
         })

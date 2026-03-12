@@ -33,6 +33,12 @@ export interface ContentPlan {
   keyPoints: string[];
   targetDurationSeconds: number;
   format: ChannelFormat;
+  segmentCount?: number;
+  musicOnlyPrompts?: {
+    imagePrompt?: string;
+    musicPrompt?: string;
+    animationPrompt?: string;
+  };
 }
 
 // === Script Types ===
