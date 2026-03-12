@@ -83,15 +83,18 @@ export async function uploadVideo(
 
     log.info(`Video uploaded: ${videoId}`);
 
-    // Set thumbnail
-    await youtube.thumbnails.set({
-      videoId,
-      media: {
-        body: createReadStream(request.thumbnailPath),
-      },
-    });
-
-    log.info(`Thumbnail set for video: ${videoId}`);
+    // Set thumbnail (non-fatal — requires channel verification)
+    try {
+      await youtube.thumbnails.set({
+        videoId,
+        media: {
+          body: createReadStream(request.thumbnailPath),
+        },
+      });
+      log.info(`Thumbnail set for video: ${videoId}`);
+    } catch (thumbErr) {
+      log.warn(`Thumbnail upload failed (channel may need verification): ${(thumbErr as Error).message}`);
+    }
 
     const result: PublishResult = {
       youtubeVideoId: videoId,

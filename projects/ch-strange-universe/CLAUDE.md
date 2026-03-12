@@ -59,7 +59,7 @@ Agent: `@content-strategist`
 Agent: `@asset-producer`
 Run in this order:
 1. **Images** — call Flux for each prompt using `frameworks/image-framework.md`
-2. **Voice Over** — call ElevenLabs with full script using voice ID `tbd`
+2. **Voice Over** — call ElevenLabs with full script using voice ID `EiNlNiXeDU1pqqOPrYMO`
 3. **Music** — call Sonauto for one fresh background track using `frameworks/music-framework.md`
 
 ---
@@ -76,7 +76,7 @@ Agent: `@script-writer`
 
 ### Step 5 — Asset Generation (Short)
 Agent: `@asset-producer`
-1. **Voice Over** — new VO recording using teaser script, same voice ID `tbd`
+1. **Voice Over** — new VO recording using teaser script, same voice ID `EiNlNiXeDU1pqqOPrYMO`
 2. **Images** — reuse images from Step 3 (reframe for 9:16 as needed)
 3. **Music** — trim and reuse music track generated in Step 3
 
@@ -134,4 +134,4 @@ Agent: `@channel-manager`
 
 ## Credentials
 - **YouTube OAuth:** `projects/ch-strange-universe/.youtube-oauth.json`
-- **ElevenLabs Voice ID:** `tbd`
+- **ElevenLabs Voice ID:** `EiNlNiXeDU1pqqOPrYMO`

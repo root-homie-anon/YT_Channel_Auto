@@ -3,10 +3,11 @@ import { existsSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { loadChannelConfig } from '../../utils/config-loader.js';
-import { generateProductionId, readJsonFile } from '../../utils/file-helpers.js';
+import { generateProductionId, readJsonFile, writeJsonFile } from '../../utils/file-helpers.js';
+import { ensureDir } from '../../utils/file-helpers.js';
 import { runPipeline } from '../../services/pipeline.js';
 import { ScriptOutput } from '../../types/index.js';
-import { buildContentPlan, buildPlaceholderScript } from '../content-planner.js';
+import { buildContentPlan } from '../content-planner.js';
 import { setupProduction, saveScriptOutput } from '../../production/produce.js';
 import {
   registerPipeline,
@@ -22,10 +23,13 @@ const PROJECT_ROOT = resolve(__dirname, '..', '..', '..');
 
 const router = Router();
 
+// Produce: sets up a production and waits for @script-writer to generate content.
+// If scriptOutput is provided (from Claude Code), starts pipeline immediately.
+// Otherwise, creates a pending production that Claude Code picks up.
 router.post('/:slug/produce', async (req: Request, res: Response) => {
   try {
     const slug = req.params.slug as string;
-    const { topic, contentPlan, scriptOutput } = req.body;
+    const { topic, scriptOutput } = req.body;
 
     if (!topic) {
       res.status(400).json({ error: 'topic is required' });
@@ -45,23 +49,39 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
 
     const config = await loadChannelConfig(slug);
     const productionId = generateProductionId();
+    const outputDir = join(PROJECT_ROOT, 'projects', slug, 'output', productionId);
+    await ensureDir(outputDir);
 
-    const plan = contentPlan || buildContentPlan(topic, config);
-    const script = scriptOutput || buildPlaceholderScript(topic, config);
+    const plan = buildContentPlan(topic, config);
+    await writeJsonFile(join(outputDir, 'content-plan.json'), plan);
 
-    registerPipeline(slug, productionId, topic);
-    startPipelineWatcher(slug, productionId);
+    if (scriptOutput) {
+      // Script already provided — start pipeline immediately
+      await saveScriptOutput(outputDir, scriptOutput);
 
-    // Run pipeline in background — don't await
-    runPipeline(slug, plan, script)
-      .catch((err) => {
-        console.error(`Pipeline failed for ${slug}:`, (err as Error).message);
-      })
-      .finally(() => {
-        removePipeline(slug);
+      registerPipeline(slug, productionId, topic);
+      startPipelineWatcher(slug, productionId);
+
+      runPipeline(slug, plan, scriptOutput, productionId)
+        .catch((err) => {
+          console.error(`Pipeline failed for ${slug}:`, (err as Error).message);
+        })
+        .finally(() => {
+          removePipeline(slug);
+        });
+
+      res.status(202).json({ productionId, status: 'pipeline_started' });
+    } else {
+      // No script — create pending production for Claude Code to pick up
+      await writeJsonFile(join(outputDir, 'pipeline-status.json'), {
+        stage: 'pending_script',
+        startedAt: new Date(),
+        updatedAt: new Date(),
+        topic,
       });
 
-    res.status(202).json({ productionId, status: 'started' });
+      res.status(202).json({ productionId, status: 'pending_script', topic });
+    }
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -114,7 +134,7 @@ router.post('/:slug/run/:productionId', async (req: Request, res: Response) => {
     registerPipeline(slug, productionId, contentPlan.topic);
     startPipelineWatcher(slug, productionId);
 
-    runPipeline(slug, plan, scriptOutput)
+    runPipeline(slug, plan, scriptOutput, productionId)
       .catch((err) => {
         console.error(`Pipeline failed for ${slug}:`, (err as Error).message);
       })
@@ -123,6 +143,45 @@ router.post('/:slug/run/:productionId', async (req: Request, res: Response) => {
       });
 
     res.status(202).json({ productionId, status: 'pipeline_started' });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// List pending productions awaiting script generation
+router.get('/pending', async (_req: Request, res: Response) => {
+  try {
+    const { readdirSync } = await import('fs');
+    const projectsDir = join(PROJECT_ROOT, 'projects');
+    const pending: Array<{ slug: string; productionId: string; topic: string; createdAt: string }> = [];
+
+    const channelDirs = readdirSync(projectsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && d.name.startsWith('ch-'));
+
+    for (const dir of channelDirs) {
+      const outputDir = join(projectsDir, dir.name, 'output');
+      if (!existsSync(outputDir)) continue;
+
+      const runs = readdirSync(outputDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory());
+
+      for (const run of runs) {
+        const statusPath = join(outputDir, run.name, 'pipeline-status.json');
+        if (!existsSync(statusPath)) continue;
+
+        const status = await readJsonFile<{ stage: string; topic?: string; startedAt?: string }>(statusPath);
+        if (status.stage === 'pending_script') {
+          pending.push({
+            slug: dir.name,
+            productionId: run.name,
+            topic: status.topic ?? 'unknown',
+            createdAt: status.startedAt ?? '',
+          });
+        }
+      }
+    }
+
+    res.json(pending);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

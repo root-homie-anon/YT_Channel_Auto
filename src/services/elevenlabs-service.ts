@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { join } from 'path';
 import { writeFile } from 'fs/promises';
 
@@ -18,6 +19,7 @@ interface VoiceoverOptions {
   modelId?: string;
   stability?: number;
   similarityBoost?: number;
+  speed?: number;
 }
 
 export async function generateVoiceover(options: VoiceoverOptions): Promise<AssetFile> {
@@ -30,6 +32,7 @@ export async function generateVoiceover(options: VoiceoverOptions): Promise<Asse
     modelId = 'eleven_multilingual_v2',
     stability = 0.5,
     similarityBoost = 0.75,
+    speed = 0.85,
   } = options;
 
   log.info(`Generating voiceover (${text.length} chars) with voice ${voiceId}`);
@@ -51,6 +54,7 @@ export async function generateVoiceover(options: VoiceoverOptions): Promise<Asse
           voice_settings: {
             stability,
             similarity_boost: similarityBoost,
+            speed,
           },
         }),
       }
@@ -71,7 +75,7 @@ export async function generateVoiceover(options: VoiceoverOptions): Promise<Asse
     log.info(`Voiceover saved: ${outputPath}`);
 
     return {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       path: outputPath,
       type: 'voiceover',
       metadata: { voiceId, modelId, charCount: String(text.length) },

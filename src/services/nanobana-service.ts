@@ -23,7 +23,8 @@ export interface ThumbnailResult {
   generatedAt: string;
 }
 
-const MODEL = 'gemini-3.1-flash-image-preview';
+// Preferred: gemini-3.1-flash-image-preview (NB2), fallback: gemini-2.5-flash-image (NB1)
+const MODEL = process.env.GEMINI_IMAGE_MODEL ?? 'gemini-2.5-flash-image';
 
 function getClient(): GoogleGenAI {
   return new GoogleGenAI({ apiKey: requireEnv('GEMINI_API_KEY') });
@@ -34,22 +35,37 @@ export async function generateThumbnailNB2(
 ): Promise<ThumbnailResult> {
   const { prompt, aspectRatio, outputPath, resolution = '4K' } = options;
 
-  const fullPrompt = `${prompt}\nOutput specs: ${resolution} resolution, thumbnail-optimized, all elements clearly readable at mobile size (320px width minimum).`;
+  const fullPrompt = `Generate an image with these specifications:\n${prompt}\nOutput specs: ${resolution} resolution, ${aspectRatio} aspect ratio, thumbnail-optimized, all elements clearly readable at mobile size (320px width minimum).`;
 
   log.info(`Generating thumbnail via ${MODEL} (${aspectRatio}, ${resolution})`);
 
   try {
     const ai = getClient();
-    const response = await ai.models.generateImages({
+    const response = await ai.models.generateContent({
       model: MODEL,
-      prompt: fullPrompt,
+      contents: fullPrompt,
       config: {
-        numberOfImages: 1,
-        aspectRatio,
+        responseModalities: ['IMAGE', 'TEXT'],
+        imageConfig: {
+          aspectRatio,
+          imageSize: resolution,
+        },
       },
     });
 
-    const imageData = response.generatedImages?.[0]?.image?.imageBytes;
+    // Extract image from response parts
+    const parts = response.candidates?.[0]?.content?.parts;
+    if (!parts) {
+      throw new ApiError(`No response parts returned from ${MODEL}`, 'nanobana');
+    }
+
+    const imagePart = parts.find(
+      (p) => 'inlineData' in p && p.inlineData != null
+    );
+
+    const imageData = imagePart && 'inlineData' in imagePart
+      ? (imagePart.inlineData as { data?: string })?.data
+      : undefined;
 
     if (!imageData) {
       throw new ApiError(`No image data returned from ${MODEL}`, 'nanobana');

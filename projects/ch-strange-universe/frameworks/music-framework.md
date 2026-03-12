@@ -1,268 +1,107 @@
-# Music Framework
+# Music Framework — Strange Universe
 
-> This file defines how `@asset-producer` generates music for all channel types.
+> This file defines how `@asset-producer` generates background music for Strange Universe videos.
 > Music is generated via Sonauto (`shared/sonauto.ts`).
-> Track A: one background track per video, sits under VO, fresh generation per video.
-> Track B: one ~30-minute track per segment, the primary content of the video.
+> Track A only — this is a narrated channel, not a music-only channel.
+> One fresh background track per video, sits under VO at low volume.
 
 ---
 
-## How It Works
+## Channel Music Identity
 
-### Two Sources of Direction
-
-```
-SOURCE 1: Channel music-framework.md  → defines the standing style, mood, and genre for this channel
-SOURCE 2: Production brief (Track A)  → per-video music direction block with primary/supporting/avoid
-          Session input (Track B)     → user-provided music concept for this session
-```
-
-The agent combines both sources. Channel framework sets the outer boundaries. Per-video direction steers within those boundaries. A session input that conflicts with the channel framework is flagged — agent asks user to confirm before proceeding.
-
-### Track A vs Track B Generation
-
-| | Track A | Track B |
-|---|---------|---------|
-| Duration | ~3–5 min (matches video) | ~30 min per segment |
-| Role | Background layer under VO | Primary content |
-| Volume | Low — VO sits on top | Full — no VO competing |
-| Source | Production brief music direction | Session music concept |
-| Reuse | Never reused — fresh per video | Never reused — fresh per segment |
-| Short format | Trimmed from long track | N/A |
+**Genre:** Dark cinematic ambient with subtle electronic undertones — think the score to a high-end investigation documentary, not a sci-fi movie soundtrack
+**Mood range:** Investigative tension / unease / quiet awe / revelation weight / reflective uncertainty
+**Energy ceiling:** Low to medium — the music must never compete with the narration. It is atmosphere, not performance.
+**Signature sound:** Deep, slow-evolving textures that create a sense of something vast and hidden just beyond perception. The music should feel like the sonic equivalent of looking at a dark sky and knowing something is watching back.
 
 ---
 
-## Sonauto Prompt Construction
+## Standing Defaults (Track A — Background Under VO)
 
-### Track A Prompt Template
+**Default Energy:** Low — present but unobtrusive, like a room tone with intention
+**Default BPM:** 55–75 BPM, or no discernible tempo for pure ambient passages
+**Default Instrumentation:**
+- Deep sub-bass synth drones (foundation layer — felt more than heard)
+- Slow-evolving synthesizer pads with cold, dark texture
+- Sparse piano — single notes with heavy reverb, placed infrequently for emotional punctuation
+- Distant metallic resonance or processed industrial textures (suggests military/institutional environment)
+- Subtle string sustains (cello or low viola) for sections requiring emotional weight
+- Occasional processed radio static or signal interference texture (very subtle, very infrequent — suggests intercepted communication)
+
+**Mood Range:** Investigative tension as default, shifting toward quiet awe for evidence revelation sections, pulling into reflective stillness for outro
+**Structure:** Evolving ambient with very slow textural changes. No melodic hook that demands attention. No rhythm section. Pure atmospheric support. The music should be noticeable when it stops, not when it plays.
+
+**Avoid:**
+- Lyrics of any kind
+- Recognizable melody that pulls focus from narration
+- Horror movie stingers, jump-scare hits, or sudden dynamic spikes
+- Cheesy sci-fi sound effects (theremin, cartoon "alien" sounds)
+- Upbeat or triumphant tones — even revelations should feel weighty, not celebratory
+- Heavy percussion or any driving beat
+- Bright, warm, or comforting tones — the music should never feel safe
+- Generic "mystery" music that sounds like a true crime podcast
+
+---
+
+## Sonauto Prompt Construction (Track A)
 
 ```
-[GENRE + STYLE]: [Primary genre from channel framework] with [style descriptors]
+[GENRE + STYLE]: Dark cinematic ambient with electronic undertones, investigation documentary score
 [MOOD]: [Primary mood from production brief] — [supporting mood if applicable]
-[ENERGY]: [Energy level: ambient / low / gentle / moderate — never high for background VO music]
-[INSTRUMENTATION]: [Primary instruments] — [supporting elements] — [avoid list]
-[TEMPO]: [Slow / gentle / steady — specify BPM range if known: 60–80 BPM typical for background]
-[DYNAMICS]: Subtle dynamic variation — no sudden drops or surges that would compete with VO
-[STRUCTURE]: No lyrics. No prominent melodic hook that demands attention.
-             Background presence only — the music should feel like the room, not the performance.
-[DURATION]: [Target duration in minutes — match to estimated video length]
-[AVOID]: [From production brief avoid list + channel framework constraints]
-```
-
-### Track B Prompt Template
-
-```
-[GENRE + STYLE]: [Primary genre from channel framework] with [style descriptors]
-[MOOD]: [Session music concept mood] within [channel framework emotional range]
-[ENERGY]: [Energy level appropriate to genre — see category defaults below]
-[INSTRUMENTATION]: [Primary instruments] — [supporting elements] — [avoid list]
-[TEMPO]: [BPM range appropriate to genre — see category defaults below]
-[DYNAMICS]: Gradual evolution over the full duration — subtle arc from opening to close.
-            No jarring transitions. No sudden energy shifts. Continuous immersive flow.
-[STRUCTURE]: No lyrics. Extended ambient/generative structure.
-             Target: approximately 30 minutes of continuous seamless music.
-[AVOID]: [Channel framework avoid list + anything from session input that conflicts]
+[ENERGY]: Low — ambient background layer, never competing with spoken narration
+[INSTRUMENTATION]: Deep sub-bass synth drones, slow-evolving cold synth pads, sparse reverb-heavy piano, distant metallic textures, subtle low string sustains. No percussion. No melody.
+[TEMPO]: Slow and deliberate — 55–75 BPM or no discernible tempo
+[DYNAMICS]: Minimal dynamic variation — no sudden drops or surges that would compete with VO. Subtle swells only at major section transitions.
+[STRUCTURE]: No lyrics. No prominent melodic hook. Continuous evolving atmospheric texture. Background presence only — the music should feel like the environment, not the foreground.
+[DURATION]: [Target duration in minutes — match to estimated video length, typically 15–22 minutes]
+[ARC]: [From production brief — typically: "opens with sparse tension, builds subtly through the investigation, swells gently at key revelations, pulls back to reflective stillness for outro"]
+[AVOID]: Lyrics, melody, percussion, horror stingers, sci-fi cliches, bright tones, warmth, anything that sounds like a video game or movie trailer
 ```
 
 ---
 
-## Category Defaults
+## Music Arc by Script Section
 
-The following defaults apply when the channel framework matches one of these categories. Override with production brief or session input direction.
+The music should subtly shift across the video's structure:
 
----
-
-### LOFI / STUDY / JAZZHOP
-
-**Default Energy:** Low — gentle, unhurried
-**Default BPM:** 65–85
-**Default Instrumentation:** Lo-fi piano or electric piano, soft drums with vinyl crackle, occasional muted guitar, light bass. Subtle tape warmth throughout.
-**Mood Range:** Cozy / nostalgic / focused / melancholy-adjacent but not sad
-**Structure:** Looping motif with gentle variation. No builds or drops. Consistent presence.
-**Avoid:** Lyrics, prominent melodic solos that demand attention, high energy percussion, bright clean production
-
----
-
-### JAZZHOP / CAFÉ
-
-**Default Energy:** Low-medium — relaxed but alive
-**Default BPM:** 75–95
-**Default Instrumentation:** Upright bass, brushed snare, jazz piano chords, optional soft trumpet or saxophone in background. Warm room presence.
-**Mood Range:** Intimate / warm / evening / nostalgic
-**Structure:** Jazz chord progression with subtle improvisation feel. Loose and organic. Never mechanical.
-**Avoid:** Lyrics, loud solos, electronic elements, sharp attack on any instrument
+| Script Section | Music Direction |
+|----------------|-----------------|
+| HOOK | Sparse — a single drone or pad. Let the words carry the tension. |
+| INTRO | Slightly fuller — add a second texture layer. Establish the investigative mood. |
+| BODY (early sections) | Steady low-level tension. Cold, institutional. The sound of digging through files. |
+| RE-HOOK moments | Subtle swell — the briefest dynamic lift to mirror the narrative escalation. |
+| BODY (key revelation) | Quiet awe — strings or piano enter briefly. The most emotionally present the music gets. |
+| BONUS | Return to tension — something new and unsettling has been introduced. |
+| OUTRO | Reflective stillness — the music thins to almost nothing. A single sustained tone. Space for the viewer to think. |
 
 ---
 
-### CHILLHOP / BEDROOM
+## Production Brief Integration
 
-**Default Energy:** Low — soft and intimate
-**Default BPM:** 70–90
-**Default Instrumentation:** Dusty samples, soft boom-bap drums, warm synth pads, light piano or guitar. Occasional vinyl texture.
-**Mood Range:** Introspective / warm / late-night / gentle
-**Structure:** Sample-loop based feel with gentle variation. Repetitive by design — hypnotic not boring.
-**Avoid:** Lyrics, hard hitting percussion, sharp highs, anything that feels bright or polished
-
----
-
-### DARK AMBIENT
-
-**Default Energy:** Ambient — near silence, dense texture
-**Default BPM:** No discernible tempo — generative drone-based
-**Default Instrumentation:** Deep sub-bass drones, slow-evolving synthesizer pads, distant metallic resonance, processed field recordings of industrial or cavernous spaces. Absolute minimal.
-**Mood Range:** Oppressive / vast / ancient / dormant / pre-event tension
-**Structure:** Evolving drone with very slow textural changes. No melodic content. No rhythm. Pure atmosphere.
-**Avoid:** Any melody, any recognizable rhythm, bright tones, warm instruments, anything organic or natural-sounding
-
----
-
-### CINEMATIC / DRAMATIC
-
-**Default Energy:** Low-medium — tension-forward, slow build
-**Default BPM:** 60–75 — or tempo-free for ambient passages
-**Default Instrumentation:** Orchestral strings (sustained), low brass undercurrent, sparse piano, distant percussion suggesting weight and scale. Subtle electronic texture optional.
-**Mood Range:** Tension / foreboding / grandeur / anticipation / melancholy at scale
-**Structure:** Slow build with emotional arc. Gentle swells. No full resolution — tension maintained throughout.
-**Avoid:** Triumphant resolution, upbeat or hopeful tone, lyrics, jazz or lofi elements, anything that breaks cinematic register
-
----
-
-### FANTASY / RPG
-
-**Default Energy:** Low-medium — magical, warm, adventurous undercurrent
-**Default BPM:** 70–90
-**Default Instrumentation:** Orchestral strings, harp, soft flute or oboe, light choir texture (wordless), delicate celesta or music box tones. Warm and rich.
-**Mood Range:** Wonder / mystery / ancient magic / quiet adventure
-**Structure:** Melodic theme with gentle development. Looping but with variation on each pass. Feels like a place, not a journey.
-**Avoid:** Hard percussion, electronic elements, aggressive energy, anything that suggests combat or urgency
-
----
-
-### SCI-FI / COSMIC
-
-**Default Energy:** Ambient-low — vast, suspended, weightless
-**Default BPM:** No discernible tempo — or very slow pulse 40–55
-**Default Instrumentation:** Synthesizer pads (cold and evolving), subtle arpeggiated tones at very low frequency, processed choir at extreme distance, occasional single tone bell or chime suspended in reverb.
-**Mood Range:** Vast / isolated / awe / suspended time / the scale of space
-**Structure:** Long-form evolving texture. Very slow tonal shifts. Occasional single melodic element emerges and dissolves. No rhythm.
-**Avoid:** Warmth, urgency, rhythm, anything earthbound, anything that feels small or intimate
-
----
-
-### SLEEP / DREAMY
-
-**Default Energy:** Ambient — near silence, pillow-soft
-**Default BPM:** No discernible tempo
-**Default Instrumentation:** Very soft synthesizer pads, slow-moving harmonic drones, occasional distant piano note dissolving in reverb, music box texture at extreme distance. Everything is soft-edged.
-**Mood Range:** Dreaming / floating / safe / dissolving into sleep
-**Structure:** Borderless — no discernible beginning or end. Tonal drifting. Nothing that triggers alertness.
-**Avoid:** Rhythm of any kind, sudden changes, anything with attack, bright tones, melody that demands attention
-
----
-
-### RAIN / STORM
-
-**Default Energy:** Ambient — the rain is the texture
-**Default BPM:** No discernible tempo
-**Default Instrumentation:** Synthesizer pads under rain ambience (rain is primary texture not music), occasional low piano chord dissolving completely in reverb, distant thunder as low rumble. Minimal.
-**Mood Range:** Shelter / introspection / melancholy / the peace of watching rain from inside
-**Structure:** Rain ambience as primary layer. Music is secondary support. Very minimal melodic presence if any.
-**Avoid:** Bright tones, upbeat elements, rhythm, anything that competes with the natural rain texture
-
----
-
-### FOREST / NATURE
-
-**Default Energy:** Ambient — the forest breathes
-**Default BPM:** No discernible tempo
-**Default Instrumentation:** Synthesizer drones tuned to natural harmonics, light acoustic guitar at extreme distance and reverb, occasional wind chime tone dissolving immediately, natural ambience textures underneath.
-**Mood Range:** Ancient / peaceful / alive / the deep quiet of old growth
-**Structure:** Continuous evolving texture. Very slow harmonic movement. No melody that pulls attention.
-**Avoid:** Electronic elements, urban sounds, rhythm, anything that feels modern or constructed
-
----
-
-### MEDITATION / MINDFULNESS
-
-**Default Energy:** Ambient — deliberate, intentional silence as much as sound
-**Default BPM:** No tempo — or single slow pulse at 40–50 BPM like a heartbeat
-**Default Instrumentation:** Singing bowls (tuned), Tibetan or crystal bowl resonance, single sustained note on strings or synthesizer, occasional bell tone with very long decay. Intentional silence between elements.
-**Mood Range:** Present / still / open / the space between thoughts
-**Structure:** Space and silence are structural elements. Notes and tones emerge, sustain, and dissolve completely before the next. No rush. No fill.
-**Avoid:** Density, constant sound, anything that fills silence, rhythm, melody, anything that suggests urgency or motion
-
----
-
-### SYNTHWAVE / RETROWAVE
-
-**Default Energy:** Medium — driving but hypnotic, not aggressive
-**Default BPM:** 100–120
-**Default Instrumentation:** Synthesizer arpeggios, gated reverb drums, bass synth, lead synth with slow attack, occasional saxophone or electric guitar texture. All analog-flavored.
-**Mood Range:** Nostalgic / driving / neon-lit / 80s forward motion / cinematic night
-**Structure:** Verse-chorus feel even without lyrics — build and release, return to main theme. Consistent groove.
-**Avoid:** Acoustic instruments, organic textures, anything pre-80s, anything overly modern or digitally clean
-
----
-
-### DARK ELECTRONIC
-
-**Default Energy:** Low-medium — industrial pulse, controlled tension
-**Default BPM:** 80–100 — or slow industrial 60–75
-**Default Instrumentation:** Industrial synthesizer textures, heavy sub-bass, metallic percussion at low volume, processed mechanical sounds as rhythmic elements. Cold and controlled.
-**Mood Range:** Industrial / controlled threat / machinery / underground / the hum of systems
-**Structure:** Rhythmic pulse as foundation. Slow textural development. No melodic resolution — tension maintained.
-**Avoid:** Warmth, organic elements, acoustic instruments, anything hopeful, anything that reduces tension
-
----
-
-### EPIC ORCHESTRAL
-
-**Default Energy:** Medium — building, vast, never fully releasing
-**Default BPM:** 60–80 — slow and weighty
-**Default Instrumentation:** Full orchestral strings (sustained and bowed), low brass (horns and trombones), choir (wordless, distant), timpani and percussion for weight, occasional solo instrument (cello, French horn) for emotional focus.
-**Mood Range:** Scale / weight / ancient grandeur / the tension before something enormous / awe without triumph
-**Structure:** Slow build with multiple waves. Each wave slightly larger than the last. No full resolution — always something more beyond the horizon.
-**Avoid:** Upbeat or triumphant resolution, modern electronic elements unless specifically directed, anything small-scale or intimate, lyrics
-
----
-
-### PEACEFUL CLASSICAL / PIANO
-
-**Default Energy:** Low — intimate, still, unhurried
-**Default BPM:** 60–75 — breathing tempo
-**Default Instrumentation:** Solo piano (primary), optional light string accompaniment at very low volume, silence as instrument. Clean acoustic recording quality — no heavy reverb.
-**Mood Range:** Contemplative / tender / suspended time / the beauty of an empty room
-**Structure:** Through-composed feel — not looping, evolving. Gentle melodic development that never demands emotional response. Music as presence.
-**Avoid:** Drama, large dynamics, percussion, electronic elements, anything that interrupts the intimacy of a single instrument in a quiet room
-
----
-
-## Production Brief Integration (Track A Only)
-
-The `music direction` block in the production brief contains:
+The `music direction` block in the production brief contains per-video overrides:
 
 ```
 PRIMARY MOOD: [single primary emotional target]
 SUPPORTING MOOD: [secondary emotional layer — optional]
 AVOID MOOD: [moods that would conflict with the video]
-ENERGY LEVEL: [ambient / low / gentle / moderate]
+ENERGY LEVEL: [ambient / low / gentle — never above gentle for this channel]
 GENRE NOTES: [any video-specific genre shift within the channel framework]
-ARC: [how the music should evolve over the video — e.g. "builds slightly in middle third, returns to quiet for outro"]
+ARC: [how the music should evolve over the video]
 ```
 
-Agent reads this block, merges with channel framework defaults above, and constructs the Sonauto prompt.
+Agent reads this block, merges with channel framework defaults above, and constructs the Sonauto prompt. Production brief direction always operates within the boundaries set by this framework — it cannot override the fundamental tone (e.g., it cannot request upbeat music).
 
-**Conflict rule:** If production brief energy level conflicts with channel framework (e.g. brief says moderate but framework is dark ambient), agent uses the lower energy level and notes the conflict in the session log.
+**Conflict rule:** If production brief requests energy above "gentle," agent uses "gentle" and notes the conflict in the session log.
 
 ---
 
-## Short Format Music (Track A, long+short)
+## Short Format Music (Teaser)
 
 The short uses the long video's generated music track — trimmed, not regenerated.
 
 Trimming logic:
 - Agent identifies the most emotionally engaging 60–90 seconds from the full track
-- Prefers the opening section (already tuned as the hook)
+- Prefers the opening section (already tuned as the hook atmosphere)
 - Fades in from 0 if not already faded — no abrupt start
 - Fades out with a 3-second fade at the end
 - No re-generation — reuse only

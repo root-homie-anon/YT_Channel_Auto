@@ -47,6 +47,7 @@ Channel-specific behavior comes from `config.json` and `frameworks/` — not fro
 | `@asset-producer` | Calls Flux (images), ElevenLabs (VO), Sonauto (music), Runway ML (animation) |
 | `@video-compiler` | FFmpeg compilation for all formats, thumbnail generation |
 | `@channel-manager` | YouTube scheduling/posting, Telegram approval bot, channel config management |
+| `@niche-researcher` | One-time agent: researches successful channels in the niche, populates all framework files with data-driven creative direction |
 
 ---
 
@@ -60,7 +61,7 @@ Prompt the user for:
 - **Format** — one of: `long` / `short` / `long+short` / `music-only`
 - **YouTube OAuth credentials** — stored per channel in `config.json`
 - **ElevenLabs voice ID** — fixed per channel, never changes
-- **Creative frameworks** — tell the user these will be authored separately and placed in `frameworks/`. Scaffold empty files now, user fills them in before first run.
+- **Creative frameworks** — scaffolded from templates, then automatically populated by `@niche-researcher`
 
 ### Step 2 — Generate Channel Structure
 Create the following automatically:
@@ -70,15 +71,25 @@ projects/ch-[channel-name]/
 ├── CLAUDE.md              ← generated from channel template
 ├── config.json            ← generated from inputs
 └── frameworks/
-    ├── script-formula.md        ← scaffolded empty
-    ├── image-framework.md       ← scaffolded empty
-    ├── music-framework.md       ← scaffolded empty
-    ├── thumbnail-formula.md     ← scaffolded empty
-    ├── title-formula.md         ← scaffolded empty
+    ├── script-formula.md        ← scaffolded from template
+    ├── image-framework.md       ← scaffolded from template
+    ├── music-framework.md       ← scaffolded from template
+    ├── thumbnail-formula.md     ← scaffolded from template
+    ├── title-formula.md         ← scaffolded from template
     └── teaser-formula.md        ← only if format includes shorts
 ```
 
-### Step 3 — config.json Schema
+### Step 3 — Niche Research & Framework Population
+After scaffolding, spawn `@niche-researcher` with the channel's niche and format.
+The agent researches successful channels in the niche, then populates all framework files with:
+- Niche-specific creative direction (tone, style, audience, pacing)
+- Data-driven defaults based on what works in the space
+- Concrete examples drawn from top-performing channels
+- All bracketed placeholders replaced with real values
+
+This is a one-time operation. After population, frameworks can be manually edited.
+
+### Step 4 — config.json Schema
 Generate `config.json` from collected inputs:
 
 ```json

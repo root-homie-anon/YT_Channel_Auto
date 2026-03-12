@@ -196,7 +196,11 @@ async function startProduction() {
       body: JSON.stringify({ topic }),
     });
     document.getElementById('produce-topic').value = '';
-    toast(`Pipeline started: ${res.productionId}`);
+    if (res.status === 'pending_script') {
+      toast(`Production created — waiting for @script-writer (${res.productionId})`);
+    } else {
+      toast(`Pipeline started: ${res.productionId}`);
+    }
     loadActivePipelines();
   } catch (err) {
     toast(err.message, 'error');

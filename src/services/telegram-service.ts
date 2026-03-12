@@ -22,11 +22,11 @@ export async function sendApprovalRequest(request: ApprovalRequest): Promise<num
   const chatId = requireEnv('TELEGRAM_CHAT_ID');
 
   const message = [
-    `🎬 *New Video Ready for Approval*`,
+    `🎬 <b>New Video Ready for Approval</b>`,
     ``,
-    `*Channel:* ${escapeMarkdown(request.channelName)}`,
-    `*Title:* ${escapeMarkdown(request.videoTitle)}`,
-    `*Preview:* ${request.youtubeUrl}`,
+    `<b>Channel:</b> ${escapeHtml(request.channelName)}`,
+    `<b>Title:</b> ${escapeHtml(request.videoTitle)}`,
+    `<b>Preview:</b> ${request.youtubeUrl}`,
     ``,
     `Reply with /approve or /reject`,
   ].join('\n');
@@ -40,7 +40,7 @@ export async function sendApprovalRequest(request: ApprovalRequest): Promise<num
       body: JSON.stringify({
         chat_id: chatId,
         text: message,
-        parse_mode: 'Markdown',
+        parse_mode: 'HTML',
       }),
     });
 
@@ -128,6 +128,9 @@ export async function pollForApproval(messageId: number, timeoutMinutes = 60): P
   return false;
 }
 
-function escapeMarkdown(text: string): string {
-  return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }

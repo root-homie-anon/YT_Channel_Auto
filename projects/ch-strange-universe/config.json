@@ -7,7 +7,7 @@
   },
   "credentials": {
     "youtubeOAuthPath": "projects/ch-strange-universe/.youtube-oauth.json",
-    "elevenLabsVoiceId": "tbd"
+    "elevenLabsVoiceId": "EiNlNiXeDU1pqqOPrYMO"
   },
   "frameworks": {
     "script": "frameworks/script-formula.md",

@@ -1,7 +1,6 @@
-# Title Formula — [Channel Name]
+# Title Formula — Strange Universe
 
 > This file defines how the `@script-writer` agent generates video titles for this channel.
-> Fill in all bracketed sections before the first production run.
 > Title generation runs after the script is complete and the thumbnail concept is locked.
 > The agent reads this file at the start of every title generation task.
 
@@ -9,9 +8,9 @@
 
 ## Channel Title Preferences
 
-**Title style:** [e.g. curiosity-driven / direct and informational / confrontational / narrative]
-**Tone:** [e.g. authoritative, conversational, dramatic — must match channel voice]
-**Avoid:** [e.g. all-caps words, exclamation marks, emojis, clickbait that the video doesn't deliver]
+**Title style:** Investigation-driven curiosity — titles frame the video as uncovering something hidden, suppressed, or misunderstood. They imply depth and evidence rather than speculation.
+**Tone:** Authoritative and measured with an undercurrent of urgency. Never breathless or sensationalist. The title should read like a documentary headline, not a tabloid.
+**Avoid:** All-caps words (except proper acronyms like UFO, UAP, CIA, NASA), exclamation marks, emojis, "You Won't Believe," "SHOCKING," "Must Watch," vague clickbait that the video doesn't deliver, question marks on yes/no questions
 **Character target:** 50–60 characters — fits without truncation across all placements
 **Hard cap:** 70 characters
 
@@ -25,10 +24,10 @@ The agent must draft every title candidate against the thumbnail concept from th
 For each title, the agent asks: does this title + thumbnail combination create a stronger curiosity gap together than either does alone?
 
 **Pairing patterns:**
-- **Thumbnail asks the question, title names the subject** — viewer sees something intriguing visually, title tells them what they're looking at
-- **Title makes the claim, thumbnail shows the stakes** — title is provocative, thumbnail makes it visceral
+- **Thumbnail asks the question, title names the subject** — viewer sees something intriguing visually (a dark military hangar, a glowing object over ocean), title tells them what they're looking at
+- **Title makes the claim, thumbnail shows the stakes** — title is provocative ("The Pentagon's Secret UFO Program"), thumbnail shows the evidence (declassified document, military installation)
 - **Both create tension from different angles** — title and thumbnail each add a layer the other doesn't, compounding the curiosity gap
-- **Thumbnail shows the outcome, title asks how** — before/after dynamic that drives clicks
+- **Thumbnail shows the outcome, title asks how** — before/after dynamic that drives clicks (e.g., thumbnail shows destroyed radar tape, title says "Why the Navy Erased the UFO Evidence")
 
 The agent notes which pairing pattern each title candidate uses.
 
@@ -38,28 +37,34 @@ The agent notes which pairing pattern each title candidate uses.
 
 The agent draws from these patterns. Multiple candidates should use different patterns — not variations of the same one.
 
-| Pattern | Structure | Example |
+| Pattern | Structure | UFO Niche Example |
 |---------|-----------|---------|
-| Curiosity Gap | The [Topic] Nobody Talks About | The Roman Strategy Nobody Talks About |
-| Specificity + Stakes | How [Specific Thing] Changed [Big Outcome] | How One Letter Changed the Course of WWII |
-| Revelation Frame | The Truth About [Topic] | The Truth About Passive Income |
-| Contradiction | [Accepted Belief] Is Actually [Opposite] | Everything You Know About Sleep Is Wrong |
-| Number + Promise | [N] Reasons [Topic] Will [Outcome] | 3 Reasons the Dollar Is Already Dead |
-| Direct Keyword | [Primary Keyword]: [Angle Clause] | Ancient Rome: Why It Really Collapsed |
-| The Reframe | Why [Topic] Isn't What You Think | Why Motivation Isn't What You Think |
-| Stakes Escalation | The [Topic] That [Dramatic Consequence] | The Decision That Ended an Empire |
+| Curiosity Gap | The [Topic] Nobody Talks About | The UFO Program Nobody Was Supposed to Find |
+| Specificity + Stakes | How [Specific Thing] Changed [Big Outcome] | How One Radar Contact Changed Pentagon UFO Policy |
+| Revelation Frame | The Truth About [Topic] | The Truth About the Roswell Debris |
+| Contradiction | [Accepted Belief] Is Actually [Opposite] | The Air Force's UFO Debunking Was Actually a Cover |
+| Direct Keyword | [Primary Keyword]: [Angle Clause] | UAP Disclosure: Why the Pentagon Changed Course |
+| The Reframe | Why [Topic] Isn't What You Think | Why the Tic-Tac UFO Isn't What You Think |
+| Stakes Escalation | The [Topic] That [Dramatic Consequence] | The Encounter That Shut Down a Nuclear Base |
+| Evidence Reveal | [N] Pieces of Evidence That [Outcome] | 4 Declassified Documents That Prove the Cover-Up |
+
+Patterns that work especially well in the UFO niche:
+- **The Suppression Frame**: "Why [Authority] Buried [Evidence]" — implies a cover-up with specificity
+- **The Witness Frame**: "[Credible Person] Saw [Specific Thing]" — leverages military/government credibility
+- **The Timeline Frame**: "What Really Happened at [Specific Place + Date]" — promises a definitive investigation
 
 ---
 
 ## Construction Rules
 
-- **Keyword front-loaded** — primary keyword in the first 3–4 words for search visibility
-- **No question titles that can be answered yes or no** — "Is X bad?" → weak. "Why X Is Destroying Y" → strong
-- **Numbers beat vague superlatives** — "3 reasons" beats "many reasons," "the biggest" beats nothing
-- **Avoid:** "This is...", "So I...", "You won't believe...", "Must watch", generic hyperbole
-- **Specificity signals quality** — a specific detail in the title implies the video has depth
+- **Keyword front-loaded** — primary keyword (UFO, UAP, or specific case name) in the first 3–4 words for search visibility
+- **No question titles that can be answered yes or no** — "Are UFOs real?" is weak. "Why the Pentagon Admitted UFOs Are Real" is strong
+- **Numbers beat vague superlatives** — "3 pilots" beats "multiple witnesses," "22 million dollars" beats "a secret budget"
+- **Avoid:** "This is...", "So I...", "You won't believe...", "Must watch", generic hyperbole, "BREAKING" (unless it genuinely just broke)
+- **Specificity signals quality** — a specific detail in the title implies the video has depth. "The 1980 Rendlesham Forest Encounter" beats "A Famous UFO Case"
 - **Emotional target must match thumbnail** — they create one feeling together, not two competing ones
 - **Never mislead** — title must accurately represent what the video delivers. Retention collapse from misleading titles kills the channel.
+- **Use credibility markers** — mentioning military rank, government agency, or official document lends weight (e.g., "Navy Commander," "Pentagon Report," "Declassified Files")
 
 ---
 

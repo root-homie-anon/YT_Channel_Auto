@@ -11,11 +11,124 @@ import { createLogger } from '../utils/logger.js';
 const execFileAsync = promisify(execFile);
 const log = createLogger('ffmpeg-service');
 
+const CROSSFADE_DURATION = 0.8; // seconds of crossfade between images
+
 interface CompileOptions {
   outputDir: string;
   manifest: AssetManifest;
   sections: ScriptSection[];
   resolution?: string;
+}
+
+/**
+ * Probe the actual duration of an audio file in seconds.
+ */
+export async function probeAudioDuration(audioPath: string): Promise<number> {
+  try {
+    const { stdout } = await execFileAsync('ffprobe', [
+      '-v', 'quiet',
+      '-show_entries', 'format=duration',
+      '-of', 'csv=p=0',
+      audioPath,
+    ]);
+    return parseFloat(stdout.trim());
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Scale section durations proportionally so they sum to the actual VO duration.
+ * This keeps images in sync with the narration.
+ */
+function scaleSectionDurations(
+  sections: ScriptSection[],
+  actualVoDuration: number
+): number[] {
+  const scriptedTotal = sections.reduce((sum, s) => sum + s.durationSeconds, 0);
+  if (scriptedTotal <= 0 || actualVoDuration <= 0) {
+    return sections.map((s) => s.durationSeconds);
+  }
+  const ratio = actualVoDuration / scriptedTotal;
+  log.info(`Scaling section durations: scripted=${scriptedTotal}s, actual VO=${actualVoDuration.toFixed(1)}s, ratio=${ratio.toFixed(3)}`);
+  return sections.map((s) => Math.max(1, Math.round(s.durationSeconds * ratio * 10) / 10));
+}
+
+/**
+ * Build a filter complex with Ken Burns + crossfade transitions between images.
+ * Returns the filter string and the label of the final video output.
+ */
+function buildKenBurnsCrossfadeFilter(
+  imageCount: number,
+  durations: number[],
+  width: string,
+  height: string,
+  scaleBase: string,
+  crossfadeDuration: number
+): { filterParts: string[]; finalVideoLabel: string } {
+  const filterParts: string[] = [];
+
+  // Generate zoompan for each image
+  for (let i = 0; i < imageCount; i++) {
+    const duration = durations[i] ?? 5;
+    const totalFrames = Math.round(duration * 30);
+
+    const zoomIn = i % 2 === 0;
+    const zoomStart = zoomIn ? '1' : '1.2';
+    const zoomEnd = zoomIn ? '1.2' : '1';
+    const zoomExpr = `${zoomStart}+(${zoomEnd}-${zoomStart})*on/${totalFrames}`;
+    const xExpr = zoomIn
+      ? `iw/2-(iw/zoom/2)+on/${totalFrames}*20`
+      : `iw/2-(iw/zoom/2)-on/${totalFrames}*20+20`;
+    const yExpr = `ih/2-(ih/zoom/2)`;
+
+    // For portrait output (shorts) with landscape source images, center-crop to 9:16
+    // before zoompan to prevent stretching. If source images are already portrait
+    // (e.g. dedicated 9:16 generations), just scale normally.
+    const w = parseInt(width, 10);
+    const h = parseInt(height, 10);
+    const isPortrait = h > w;
+    const targetRatio = w / h;
+
+    let scaleAndCrop: string;
+    if (isPortrait) {
+      // Scale height to 3000px, then crop to target ratio if source is wider
+      const cropW = Math.round(3000 * targetRatio);
+      // crop filter is safe: if source is narrower than cropW, ffmpeg clamps to source width
+      scaleAndCrop = `scale=-1:3000,crop='min(iw,${cropW})':3000`;
+    } else {
+      scaleAndCrop = `scale=${scaleBase}`;
+    }
+
+    filterParts.push(
+      `[${i}:v]${scaleAndCrop},` +
+      `zoompan=z='${zoomExpr}':x='${xExpr}':y='${yExpr}':d=${totalFrames}:s=${width}x${height}:fps=30,` +
+      `setsar=1,format=yuv420p[v${i}]`
+    );
+  }
+
+  // Chain crossfade transitions between segments
+  if (imageCount <= 1) {
+    return { filterParts, finalVideoLabel: 'v0' };
+  }
+
+  let prevLabel = `v0`;
+  for (let i = 1; i < imageCount; i++) {
+    const outLabel = i === imageCount - 1 ? 'vcf' : `xf${i}`;
+    // Offset = cumulative duration of previous segments minus accumulated crossfade overlap
+    const cumulativeDuration = durations
+      .slice(0, i)
+      .reduce((sum, d) => sum + d, 0);
+    const cumulativeCrossfade = (i - 1) * crossfadeDuration;
+    const offset = Math.max(0, cumulativeDuration - cumulativeCrossfade - crossfadeDuration);
+
+    filterParts.push(
+      `[${prevLabel}][v${i}]xfade=transition=fade:duration=${crossfadeDuration}:offset=${offset.toFixed(3)}[${outLabel}]`
+    );
+    prevLabel = outLabel;
+  }
+
+  return { filterParts, finalVideoLabel: 'vcf' };
 }
 
 export async function compileLongFormVideo(options: CompileOptions): Promise<CompilationResult> {
@@ -28,56 +141,62 @@ export async function compileLongFormVideo(options: CompileOptions): Promise<Com
   log.info(`Compiling long-form video (${sections.length} sections)`);
 
   try {
-    // Build filter complex for image sequence with voiceover timing
+    // Scale section durations to match actual VO length
+    let durations = sections.map((s) => s.durationSeconds);
+    if (manifest.voiceover.length > 0) {
+      const actualVoDuration = await probeAudioDuration(manifest.voiceover[0].path);
+      if (actualVoDuration > 0) {
+        durations = scaleSectionDurations(sections, actualVoDuration);
+      }
+    }
+
     const inputArgs: string[] = [];
-    const filterParts: string[] = [];
     let inputIndex = 0;
 
-    // Add images as inputs with duration matching voiceover
+    // Add images as inputs
     for (let i = 0; i < manifest.images.length; i++) {
-      const image = manifest.images[i];
-      const section = sections[i];
-      const duration = section?.durationSeconds ?? 5;
-
-      inputArgs.push('-loop', '1', '-t', String(duration), '-i', image.path);
-      filterParts.push(
-        `[${inputIndex}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-        `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v${i}]`
-      );
+      inputArgs.push('-i', manifest.images[i].path);
       inputIndex++;
     }
 
-    // Add voiceover files
-    const voInputStart = inputIndex;
-    for (const vo of manifest.voiceover) {
-      inputArgs.push('-i', vo.path);
+    // Build Ken Burns + crossfade filter
+    const { filterParts, finalVideoLabel } = buildKenBurnsCrossfadeFilter(
+      manifest.images.length,
+      durations,
+      width,
+      height,
+      '3000:-1',
+      CROSSFADE_DURATION
+    );
+
+    // Add voiceover (single file with full narration)
+    const voInputIndex = inputIndex;
+    if (manifest.voiceover.length > 0) {
+      inputArgs.push('-i', manifest.voiceover[0].path);
       inputIndex++;
     }
 
-    // Add background music
+    // Add background music (loop to fill full video duration)
     let musicInputIndex = -1;
     if (manifest.music.length > 0) {
-      inputArgs.push('-i', manifest.music[0].path);
+      inputArgs.push('-stream_loop', '-1', '-i', manifest.music[0].path);
       musicInputIndex = inputIndex;
       inputIndex++;
     }
 
-    // Concatenate video streams
-    const videoConcat = manifest.images.map((_, i) => `[v${i}]`).join('');
-    filterParts.push(`${videoConcat}concat=n=${manifest.images.length}:v=1:a=0[vout]`);
-
-    // Concatenate voiceover audio
-    const audioConcat = manifest.voiceover.map((_, i) => `[${voInputStart + i}:a]`).join('');
-    filterParts.push(`${audioConcat}concat=n=${manifest.voiceover.length}:v=0:a=1[voaudio]`);
+    // Map final video output
+    filterParts.push(`[${finalVideoLabel}]null[vout]`);
 
     // Mix voiceover with background music
-    if (musicInputIndex >= 0) {
+    if (manifest.voiceover.length > 0 && musicInputIndex >= 0) {
       filterParts.push(
         `[${musicInputIndex}:a]volume=0.15[bgmusic]`,
-        `[voaudio][bgmusic]amix=inputs=2:duration=first:dropout_transition=3[aout]`
+        `[${voInputIndex}:a][bgmusic]amix=inputs=2:duration=first:dropout_transition=3[aout]`
       );
-    } else {
-      filterParts.push(`[voaudio]acopy[aout]`);
+    } else if (manifest.voiceover.length > 0) {
+      filterParts.push(`[${voInputIndex}:a]acopy[aout]`);
+    } else if (musicInputIndex >= 0) {
+      filterParts.push(`[${musicInputIndex}:a]acopy[aout]`);
     }
 
     const filterComplex = filterParts.join(';');
@@ -131,34 +250,63 @@ export async function compileShortFormVideo(options: CompileOptions): Promise<Co
   log.info(`Compiling short-form video (${sections.length} sections)`);
 
   try {
+    // Scale section durations to match actual VO length
+    let durations = sections.map((s) => s.durationSeconds);
+    if (manifest.voiceover.length > 0) {
+      const actualVoDuration = await probeAudioDuration(manifest.voiceover[0].path);
+      if (actualVoDuration > 0) {
+        durations = scaleSectionDurations(sections, actualVoDuration);
+      }
+    }
+
     const inputArgs: string[] = [];
-    const filterParts: string[] = [];
     let inputIndex = 0;
 
-    for (let i = 0; i < manifest.images.length; i++) {
-      const image = manifest.images[i];
-      const section = sections[i];
-      const duration = section?.durationSeconds ?? 3;
+    // Only use images matching the number of sections (not the full manifest)
+    const imageCount = Math.min(manifest.images.length, sections.length);
+    for (let i = 0; i < imageCount; i++) {
+      inputArgs.push('-i', manifest.images[i].path);
+      inputIndex++;
+    }
 
-      inputArgs.push('-loop', '1', '-t', String(duration), '-i', image.path);
+    // Build Ken Burns + crossfade filter
+    const { filterParts, finalVideoLabel } = buildKenBurnsCrossfadeFilter(
+      imageCount,
+      durations,
+      width,
+      height,
+      '-1:3000',
+      CROSSFADE_DURATION
+    );
+
+    const voInputIndex = inputIndex;
+    if (manifest.voiceover.length > 0) {
+      inputArgs.push('-i', manifest.voiceover[0].path);
+      inputIndex++;
+    }
+
+    // Add background music for shorts too
+    let musicInputIndex = -1;
+    if (manifest.music.length > 0) {
+      inputArgs.push('-stream_loop', '-1', '-i', manifest.music[0].path);
+      musicInputIndex = inputIndex;
+      inputIndex++;
+    }
+
+    // Map final video output
+    filterParts.push(`[${finalVideoLabel}]null[vout]`);
+
+    // Mix voiceover with background music
+    if (manifest.voiceover.length > 0 && musicInputIndex >= 0) {
       filterParts.push(
-        `[${inputIndex}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-        `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v${i}]`
+        `[${musicInputIndex}:a]volume=0.2[bgmusic]`,
+        `[${voInputIndex}:a][bgmusic]amix=inputs=2:duration=first:dropout_transition=2[aout]`
       );
-      inputIndex++;
+    } else if (manifest.voiceover.length > 0) {
+      filterParts.push(`[${voInputIndex}:a]acopy[aout]`);
+    } else if (musicInputIndex >= 0) {
+      filterParts.push(`[${musicInputIndex}:a]acopy[aout]`);
     }
-
-    const voInputStart = inputIndex;
-    for (const vo of manifest.voiceover) {
-      inputArgs.push('-i', vo.path);
-      inputIndex++;
-    }
-
-    const videoConcat = manifest.images.map((_, i) => `[v${i}]`).join('');
-    filterParts.push(`${videoConcat}concat=n=${manifest.images.length}:v=1:a=0[vout]`);
-
-    const audioConcat = manifest.voiceover.map((_, i) => `[${voInputStart + i}:a]`).join('');
-    filterParts.push(`${audioConcat}concat=n=${manifest.voiceover.length}:v=0:a=1[aout]`);
 
     const filterComplex = filterParts.join(';');
 
@@ -211,11 +359,54 @@ export async function compileMusicOnlyVideo(
   log.info('Compiling music-only video');
 
   try {
-    const inputArgs: string[] = [];
-    const filterParts: string[] = [];
+    const hasAnimations = manifest.animations.length > 0;
 
-    // Single image looped for music duration
-    if (manifest.images.length > 0 && manifest.music.length > 0) {
+    if (hasAnimations && manifest.music.length > 0) {
+      // Use Runway ML animation clips — concatenate and loop to fill music duration
+      log.info(`Using ${manifest.animations.length} Runway ML animation clips`);
+      const inputArgs: string[] = [];
+      const filterParts: string[] = [];
+
+      for (let i = 0; i < manifest.animations.length; i++) {
+        inputArgs.push('-i', manifest.animations[i].path);
+        filterParts.push(
+          `[${i}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+          `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1[v${i}]`
+        );
+      }
+
+      const musicIdx = manifest.animations.length;
+      inputArgs.push('-i', manifest.music[0].path);
+
+      // Concatenate all animation clips, then loop to fill music length
+      const videoConcat = manifest.animations.map((_, i) => `[v${i}]`).join('');
+      filterParts.push(
+        `${videoConcat}concat=n=${manifest.animations.length}:v=1:a=0[vcombined]`,
+        `[vcombined]loop=-1:size=32767:start=0,fps=30[vout]`
+      );
+
+      const ffmpegArgs = [
+        ...inputArgs,
+        '-filter_complex', filterParts.join(';'),
+        '-map', '[vout]',
+        '-map', `${musicIdx}:a`,
+        '-c:v', 'libx264',
+        '-preset', 'medium',
+        '-crf', '23',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-shortest',
+        '-movflags', '+faststart',
+        '-y',
+        videoPath,
+      ];
+
+      await runFfmpeg(ffmpegArgs);
+    } else if (manifest.images.length > 0 && manifest.music.length > 0) {
+      // Fallback: static image looped for music duration (no animations available)
+      const inputArgs: string[] = [];
+      const filterParts: string[] = [];
+
       inputArgs.push('-loop', '1', '-i', manifest.images[0].path);
       inputArgs.push('-i', manifest.music[0].path);
 

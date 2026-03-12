@@ -41,6 +41,41 @@ export interface ContentPlan {
 
 // === Script Types ===
 
+export interface ProductionBrief {
+  topic: string;
+  angle: string;
+  estimatedRuntime: string;
+  imageDirection?: {
+    primaryMotif: string;
+    supportingMotifs: string[];
+    avoid: string;
+    visualMood: string;
+    colorPalette: string;
+    eraSetting: string;
+    styleReference: string;
+  };
+  musicDirection?: {
+    primaryMood: string;
+    supportingMoods: string[];
+    avoidMood: string;
+    energyLevel: string;
+    genreNotes: string;
+    arc: string;
+  };
+  thumbnailDirection?: {
+    primaryConcept: string;
+    emotionalHook: string;
+    textOverlay: string;
+    compositionNote: string;
+  };
+  titleDirection?: {
+    coreHookPhrase: string;
+    primaryKeyword: string;
+    supportingKeywords: string[];
+    emotionalTarget: string;
+  };
+}
+
 export interface ScriptOutput {
   title: string;
   script: ScriptSection[];
@@ -48,6 +83,7 @@ export interface ScriptOutput {
   tags: string[];
   hashtags: string[];
   teaserScript?: ScriptSection[];
+  productionBrief?: ProductionBrief;
 }
 
 export interface ScriptSection {
@@ -61,9 +97,11 @@ export interface ScriptSection {
 
 export interface AssetManifest {
   images: AssetFile[];
+  portraitImages?: AssetFile[];
   voiceover: AssetFile[];
   music: AssetFile[];
   animations: AssetFile[];
+  stockFootage?: AssetFile[];
 }
 
 export interface AssetFile {

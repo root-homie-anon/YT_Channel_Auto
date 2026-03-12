@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
 
@@ -67,7 +68,7 @@ export async function generateAnimation(options: AnimationOptions): Promise<Asse
     log.info(`Animation saved: ${outputPath}`);
 
     return {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       path: outputPath,
       type: 'animation',
       durationSeconds,

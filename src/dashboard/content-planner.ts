@@ -1,4 +1,4 @@
-import { ContentPlan, ScriptOutput, ChannelConfig, ChannelFormat } from '../types/index.js';
+import { ContentPlan, ChannelConfig, ChannelFormat } from '../types/index.js';
 
 const DEFAULT_DURATIONS: Record<ChannelFormat, number> = {
   long: 600,
@@ -19,22 +19,5 @@ export function buildContentPlan(topic: string, config: ChannelConfig): ContentP
     keyPoints: [],
     targetDurationSeconds: duration,
     format: config.channel.format,
-  };
-}
-
-export function buildPlaceholderScript(topic: string, _config: ChannelConfig): ScriptOutput {
-  return {
-    title: topic,
-    script: [
-      {
-        sectionName: 'Introduction',
-        narration: '',
-        imageCue: '',
-        durationSeconds: 30,
-      },
-    ],
-    description: '',
-    tags: [],
-    hashtags: [],
   };
 }
