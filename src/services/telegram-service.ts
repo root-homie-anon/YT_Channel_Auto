@@ -128,6 +128,100 @@ export async function pollForApproval(messageId: number, timeoutMinutes = 60): P
   return false;
 }
 
+export async function sendPhoto(filePath: string, caption?: string): Promise<number> {
+  const botToken = requireEnv('TELEGRAM_BOT_TOKEN');
+  const chatId = requireEnv('TELEGRAM_CHAT_ID');
+  return sendFile(botToken, chatId, 'sendPhoto', 'photo', filePath, caption);
+}
+
+export async function sendVideo(filePath: string, caption?: string): Promise<number> {
+  const botToken = requireEnv('TELEGRAM_BOT_TOKEN');
+  const chatId = requireEnv('TELEGRAM_CHAT_ID');
+  return sendFile(botToken, chatId, 'sendVideo', 'video', filePath, caption);
+}
+
+export async function sendAudio(filePath: string, caption?: string): Promise<number> {
+  const botToken = requireEnv('TELEGRAM_BOT_TOKEN');
+  const chatId = requireEnv('TELEGRAM_CHAT_ID');
+  return sendFile(botToken, chatId, 'sendAudio', 'audio', filePath, caption);
+}
+
+export async function sendDocument(filePath: string, caption?: string): Promise<number> {
+  const botToken = requireEnv('TELEGRAM_BOT_TOKEN');
+  const chatId = requireEnv('TELEGRAM_CHAT_ID');
+  return sendFile(botToken, chatId, 'sendDocument', 'document', filePath, caption);
+}
+
+async function sendFile(
+  botToken: string,
+  chatId: string,
+  method: string,
+  fieldName: string,
+  filePath: string,
+  caption?: string,
+): Promise<number> {
+  const { createReadStream } = await import('fs');
+  const { stat } = await import('fs/promises');
+  const { basename } = await import('path');
+
+  const fileStats = await stat(filePath);
+  const fileName = basename(filePath);
+
+  log.info(`Sending ${fieldName} to Telegram: ${fileName} (${(fileStats.size / 1024 / 1024).toFixed(1)}MB)`);
+
+  // Read file into buffer for multipart upload
+  const fileBuffer = await new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const stream = createReadStream(filePath);
+    stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+    stream.on('end', () => resolve(Buffer.concat(chunks)));
+    stream.on('error', reject);
+  });
+
+  const boundary = `----FormBoundary${Date.now()}`;
+  const parts: Buffer[] = [];
+
+  // chat_id field
+  parts.push(Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n${chatId}\r\n`
+  ));
+
+  // caption field
+  if (caption) {
+    parts.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${caption}\r\n`
+    ));
+  }
+
+  // file field
+  parts.push(Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="${fieldName}"; filename="${fileName}"\r\nContent-Type: application/octet-stream\r\n\r\n`
+  ));
+  parts.push(fileBuffer);
+  parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+
+  const body = Buffer.concat(parts);
+
+  const response = await fetch(`${TELEGRAM_API_BASE}${botToken}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    body,
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new ApiError(
+      `Telegram ${method} failed ${response.status}: ${errorBody}`,
+      'telegram',
+      response.status
+    );
+  }
+
+  const result = (await response.json()) as { result: TelegramMessage };
+  log.info(`${fieldName} sent, message ID: ${result.result.message_id}`);
+  return result.result.message_id;
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')

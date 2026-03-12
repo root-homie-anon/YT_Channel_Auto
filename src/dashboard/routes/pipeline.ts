@@ -29,7 +29,7 @@ const router = Router();
 router.post('/:slug/produce', async (req: Request, res: Response) => {
   try {
     const slug = req.params.slug as string;
-    const { topic, scriptOutput } = req.body;
+    const { topic, scriptOutput, durationHours, segmentCount } = req.body;
 
     if (!topic) {
       res.status(400).json({ error: 'topic is required' });
@@ -52,7 +52,7 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
     const outputDir = join(PROJECT_ROOT, 'projects', slug, 'output', productionId);
     await ensureDir(outputDir);
 
-    const plan = buildContentPlan(topic, config);
+    const plan = buildContentPlan(topic, config, { durationHours, segmentCount });
     await writeJsonFile(join(outputDir, 'content-plan.json'), plan);
 
     if (scriptOutput) {

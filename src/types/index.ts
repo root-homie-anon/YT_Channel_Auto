@@ -12,10 +12,6 @@ export interface ChannelConfig {
     elevenLabsVoiceId: string;
   };
   frameworks: FrameworkPaths;
-  musicOnly?: {
-    defaultDurationHours: number | null;
-    defaultSegmentCount: number | null;
-  };
 }
 
 export type ChannelFormat = 'long' | 'short' | 'long+short' | 'music-only';

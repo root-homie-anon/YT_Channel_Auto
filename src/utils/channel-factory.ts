@@ -14,10 +14,6 @@ export interface ChannelInputs {
   format: ChannelFormat;
   niche: string;
   elevenLabsVoiceId: string;
-  musicOnly: {
-    defaultDurationHours: number | null;
-    defaultSegmentCount: number | null;
-  };
 }
 
 export function toSlug(name: string): string {
@@ -49,8 +45,6 @@ export function processTemplate(inputs: ChannelInputs, oauthPath: string): strin
     '{{CHANNEL_NICHE}}': inputs.niche,
     '{{ELEVENLABS_VOICE_ID}}': inputs.elevenLabsVoiceId,
     '{{YOUTUBE_OAUTH_PATH}}': oauthPath,
-    '{{DEFAULT_DURATION_HOURS}}': String(inputs.musicOnly.defaultDurationHours ?? 'not set'),
-    '{{DEFAULT_SEGMENT_COUNT}}': String(inputs.musicOnly.defaultSegmentCount ?? 'none — seamless video'),
   };
 
   for (const [placeholder, value] of Object.entries(replacements)) {
@@ -83,7 +77,6 @@ export function buildConfig(inputs: ChannelInputs, oauthPath: string): ChannelCo
       title: 'frameworks/title-formula.md',
       ...(includesShorts && { teaser: 'frameworks/teaser-formula.md' }),
     },
-    ...(inputs.format === 'music-only' && { musicOnly: inputs.musicOnly }),
   };
 
   return config;

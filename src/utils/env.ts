@@ -15,7 +15,10 @@ export const ENV = {
   // ElevenLabs
   ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY ?? '',
 
-  // Sonauto
+  // Replicate (Stable Audio 2.5)
+  REPLICATE_API_TOKEN: process.env.REPLICATE_API_TOKEN ?? '',
+
+  // Sonauto (legacy)
   SONAUTO_API_KEY: process.env.SONAUTO_API_KEY ?? '',
 
   // Runway ML

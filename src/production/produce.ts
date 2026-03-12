@@ -26,9 +26,15 @@ export interface ProductionSetup {
   };
 }
 
+export interface ProductionOptions {
+  durationHours?: number;
+  segmentCount?: number;
+}
+
 export async function setupProduction(
   channelSlug: string,
-  topic?: string
+  topic?: string,
+  options?: ProductionOptions,
 ): Promise<ProductionSetup> {
   const config = await loadChannelConfig(channelSlug);
   const channelDir = getChannelDir(channelSlug);
@@ -51,7 +57,10 @@ export async function setupProduction(
     topic: finalTopic,
     angle: '',
     keyPoints: [],
-    targetDurationSeconds: config.channel.format === 'music-only' ? 3600 : 600,
+    targetDurationSeconds:
+      config.channel.format === 'music-only' && options?.durationHours
+        ? options.durationHours * 3600
+        : config.channel.format === 'music-only' ? 3600 : 600,
     format: config.channel.format,
   };
 

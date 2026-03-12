@@ -7,10 +7,19 @@ const DEFAULT_DURATIONS: Record<ChannelFormat, number> = {
   'music-only': 3600,
 };
 
-export function buildContentPlan(topic: string, config: ChannelConfig): ContentPlan {
+export interface MusicOnlyOptions {
+  durationHours?: number;
+  segmentCount?: number;
+}
+
+export function buildContentPlan(
+  topic: string,
+  config: ChannelConfig,
+  musicOptions?: MusicOnlyOptions,
+): ContentPlan {
   const duration =
-    config.channel.format === 'music-only' && config.musicOnly?.defaultDurationHours
-      ? config.musicOnly.defaultDurationHours * 3600
+    config.channel.format === 'music-only' && musicOptions?.durationHours
+      ? musicOptions.durationHours * 3600
       : DEFAULT_DURATIONS[config.channel.format];
 
   return {

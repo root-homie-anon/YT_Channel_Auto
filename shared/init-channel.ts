@@ -69,17 +69,7 @@ const collectInputs = async (): Promise<ChannelInputs> => {
     elevenLabsVoiceId = await askRequired('ElevenLabs voice ID: ');
   }
 
-  let musicOnly: ChannelInputs['musicOnly'] = { defaultDurationHours: null, defaultSegmentCount: null };
-  if (format === 'music-only') {
-    const durationInput = await ask('Default video duration in hours (e.g. 8): ');
-    const segmentInput = await ask('Default segment count (leave blank for seamless/no segments): ');
-    musicOnly = {
-      defaultDurationHours: durationInput ? parseFloat(durationInput) : null,
-      defaultSegmentCount: segmentInput ? parseInt(segmentInput, 10) : null,
-    };
-  }
-
-  return { name, slug, format, niche, elevenLabsVoiceId, musicOnly };
+  return { name, slug, format, niche, elevenLabsVoiceId };
 };
 
 // ── YouTube OAuth flow ────────────────────────────────────────

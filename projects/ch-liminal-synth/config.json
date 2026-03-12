@@ -1,0 +1,19 @@
+{
+  "channel": {
+    "name": "Liminal Synth",
+    "slug": "ch-liminal-synth",
+    "format": "music-only",
+    "niche": "Electronic Synth"
+  },
+  "credentials": {
+    "youtubeOAuthPath": "projects/ch-liminal-synth/.youtube-oauth.json",
+    "elevenLabsVoiceId": "tbd"
+  },
+  "frameworks": {
+    "script": "",
+    "image": "frameworks/image-framework.md",
+    "music": "frameworks/music-framework.md",
+    "thumbnail": "frameworks/thumbnail-formula.md",
+    "title": "frameworks/title-formula.md"
+  }
+}

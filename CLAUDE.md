@@ -111,15 +111,11 @@ Generate `config.json` from collected inputs:
     "thumbnail": "frameworks/thumbnail-formula.md",
     "title": "frameworks/title-formula.md",
     "teaser": "frameworks/teaser-formula.md"
-  },
-  "musicOnly": {
-    "defaultDurationHours": null,
-    "defaultSegmentCount": null
   }
 }
 ```
 
-`musicOnly` block only included if format is `music-only`. `teaser` framework path only included if format includes shorts.
+`teaser` framework path only included if format includes shorts. Duration and segment count for music-only channels are set at production time, not during channel init.
 
 ---
 

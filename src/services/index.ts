@@ -1,6 +1,7 @@
 export { generateImage, generateBatchImages } from './flux-service.js';
 export { generateVoiceover, generateSectionVoiceovers } from './elevenlabs-service.js';
-export { generateMusicElevenLabs as generateMusic } from './elevenlabs-music-service.js';
+export { generateMusicElevenLabs } from './elevenlabs-music-service.js';
+export { generateMusic } from './replicate-audio-service.js';
 export { generateAnimation } from './runway-service.js';
 export {
   compileLongFormVideo,

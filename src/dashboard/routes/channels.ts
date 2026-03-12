@@ -107,7 +107,7 @@ router.get('/:slug', async (req: Request, res: Response) => {
 
 router.post('/', (req: Request, res: Response) => {
   try {
-    const { name, niche, format, elevenLabsVoiceId, musicOnly } = req.body;
+    const { name, niche, format, elevenLabsVoiceId } = req.body;
 
     if (!name || !niche || !format) {
       res.status(400).json({ error: 'name, niche, and format are required' });
@@ -120,7 +120,6 @@ router.post('/', (req: Request, res: Response) => {
       format,
       niche,
       elevenLabsVoiceId: elevenLabsVoiceId || 'tbd',
-      musicOnly: musicOnly || { defaultDurationHours: null, defaultSegmentCount: null },
     };
 
     const channelDir = join(PROJECTS_DIR, inputs.slug);

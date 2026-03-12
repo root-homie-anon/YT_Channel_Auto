@@ -15,21 +15,14 @@ All paths below are relative to this channel directory unless explicitly noted.
 
 ---
 
-## Default Config
-- **Default video duration:** {{DEFAULT_DURATION_HOURS}} hours
-- **Default segment count:** {{DEFAULT_SEGMENT_COUNT}} segments
-- Segment duration is calculated automatically: (duration in minutes) ÷ (segment count)
-- If segment count is null: produce one seamless continuous video with no segments
-
----
-
 ## Session Start
 Ask the user for the following before doing anything else:
 1. **Image concept** — visual direction for this session
 2. **Music concept** — sonic direction for this session
-3. **Video length** — confirm or override the default ({{DEFAULT_DURATION_HOURS}} hrs)
-4. **Segment count** — confirm or override the default ({{DEFAULT_SEGMENT_COUNT}} segments). Enter 0 or none for one seamless video.
+3. **Video length** — duration in hours (e.g. 1, 4, 8)
+4. **Segment count** — number of segments, or 0/none for one seamless video
 
+Segment duration is calculated automatically: (total minutes) ÷ (segment count).
 Once all inputs are confirmed, calculate segment duration and begin the pipeline.
 
 ---

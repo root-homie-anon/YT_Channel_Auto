@@ -1,15 +1,15 @@
-# {{CHANNEL_NAME}} — Channel Operations File
+# Liminal Synth — Channel Operations File
 
 ## Channel Identity
-- **Name:** {{CHANNEL_NAME}}
-- **Slug:** {{CHANNEL_SLUG}}
+- **Name:** Liminal Synth
+- **Slug:** ch-liminal-synth
 - **Format:** music-only
-- **Niche:** {{CHANNEL_NICHE}}
+- **Niche:** Electronic Synth
 
 ---
 
 ## Scope Boundary
-This subagent operates exclusively within `projects/{{CHANNEL_SLUG}}/`.
+This subagent operates exclusively within `projects/ch-liminal-synth/`.
 Do not read, write, or reference any other channel directory or root-level config.
 All paths below are relative to this channel directory unless explicitly noted.
 
@@ -114,4 +114,4 @@ Agent: `@channel-manager`
 ---
 
 ## Credentials
-- **YouTube OAuth:** `{{YOUTUBE_OAUTH_PATH}}`
+- **YouTube OAuth:** `projects/ch-liminal-synth/.youtube-oauth.json`
