@@ -44,7 +44,7 @@ export async function generateMusic(options: MusicGenerateOptions): Promise<Asse
       body: JSON.stringify({
         prompt,
         num_songs: 1,
-        ...(isInstrumental && { tags: 'instrumental' }),
+        ...(isInstrumental && { tags: ['instrumental'] }),
       }),
     });
 
