@@ -18,9 +18,10 @@ All paths below are relative to this channel directory unless explicitly noted.
 ## Session Start
 Ask the user for the following before doing anything else:
 1. **Image concept** — visual direction for this session
-2. **Music concept** — sonic direction for this session
-3. **Video length** — duration in hours (e.g. 1, 4, 8)
-4. **Segment count** — number of segments, or 0/none for one seamless video
+2. **Video length** — duration in hours (e.g. 1, 4, 8)
+3. **Segment count** — number of segments, or 0/none for one seamless video
+
+Music prompt is locked in `frameworks/music-framework.md` — do not ask for music concept.
 
 Segment duration is calculated automatically: (total minutes) ÷ (segment count).
 Once all inputs are confirmed, calculate segment duration and proceed to Step 1.
@@ -70,10 +71,11 @@ This is the core creative step. The agent reads all frameworks, checks rotation 
 - Do not write custom animation prompts — select from the confirmed library only
 - Output: `animationPrompts[]` — one confirmed prompt string per segment
 
-**Music prompt** (one for the session):
-- Read `frameworks/music-framework.md`
-- Apply the user's music concept through the framework
-- Output: `musicPrompt` — single prompt string used for all segments
+**Music prompt** (locked — same for every production):
+- Read `frameworks/music-framework.md` — contains the locked prompt
+- Use the exact locked prompt: `electronic, Drum Machine, Bass, Lush Synthesizer Pads, Synthesizer Arp, Synth Bass, Melancholic, Vibe, Cool, Modern, Atmospheric, well-arranged composition, 115 BPM`
+- Do not modify based on session inputs — pass through unchanged
+- Output: `musicPrompt` — this exact string for all segments
 
 **Pass all to the pipeline:**
 ```json

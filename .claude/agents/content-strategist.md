@@ -11,7 +11,7 @@ Session driver and content planner. Reads the channel's config and creative fram
 
 ## Workflow — Music Only (Track B)
 1. Load channel `config.json` and all `frameworks/*.md` files
-2. Collect session inputs from user: image concept, music concept, video length, segment count
+2. Collect session inputs from user: image concept, video length, segment count (music prompt may be locked per channel — check music framework)
 3. **Read rotation state** — `GET /api/channels/:slug/rotation-state` or read `rotation-state.json` from channel dir:
    - `imageSlot`: the next slot to use in the Master Rotation Sequence (1-8)
    - `lastEnvironment`: exclude this from the first segment to avoid consecutive repeats
@@ -20,7 +20,7 @@ Session driver and content planner. Reads the channel's config and creative fram
 4. **Construct prompt arrays** — this is the core creative step:
    - Read Flux skill file + image framework → build `imagePrompts[]` (one per segment, advancing rotation slot per segment starting from `imageSlot`)
    - Read Runway skill file + animation framework → build `animationPrompts[]` (one per segment, selected from confirmed library by scene type)
-   - Read music framework → build `musicPrompt` (single prompt for the session)
+   - Read music framework → use locked prompt if defined, otherwise build `musicPrompt` from session input
 5. Pass prompt arrays + segment count + duration + `lastEnvironment` + `lastAtmosphere` (from final segment) to the pipeline via dashboard API
    - Rotation state advances automatically after successful compilation — no manual tracking needed
 5. Pipeline runs asset generation, sends Telegram checkpoint 1
