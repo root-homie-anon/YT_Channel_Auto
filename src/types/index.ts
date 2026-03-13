@@ -12,6 +12,7 @@ export interface ChannelConfig {
     elevenLabsVoiceId: string;
   };
   frameworks: FrameworkPaths;
+  visualFilter?: string;
 }
 
 export type ChannelFormat = 'long' | 'short' | 'long+short' | 'music-only';
@@ -164,7 +165,9 @@ export type PipelineStage =
   | 'planning'
   | 'scripting'
   | 'asset_generation'
+  | 'asset_preview'
   | 'compilation'
+  | 'metadata_generation'
   | 'approval'
   | 'publishing'
   | 'complete'

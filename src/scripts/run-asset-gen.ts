@@ -35,7 +35,6 @@ async function main(): Promise<void> {
 
   // Load frameworks
   const imageFramework = await loadFramework(CHANNEL_DIR, 'frameworks/image-framework.md');
-  const _musicFramework = await loadFramework(CHANNEL_DIR, 'frameworks/music-framework.md');
 
   const manifest: AssetManifest = {
     images: [],

@@ -42,7 +42,7 @@ export function buildContentPlan(
     if (musicOptions.musicPrompt) prompts.musicPrompt = musicOptions.musicPrompt;
     if (musicOptions.animationPrompt) prompts.animationPrompt = musicOptions.animationPrompt;
     if (Object.keys(prompts).length > 0) {
-      plan.musicOnlyPrompts = prompts as ContentPlan['musicOnlyPrompts'];
+      plan.musicOnlyPrompts = prompts as NonNullable<ContentPlan['musicOnlyPrompts']>;
     }
   }
 

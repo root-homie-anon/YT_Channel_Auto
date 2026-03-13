@@ -15,5 +15,6 @@
     "music": "frameworks/music-framework.md",
     "thumbnail": "frameworks/thumbnail-formula.md",
     "title": "frameworks/title-formula.md"
-  }
+  },
+  "visualFilter": "synthwave"
 }

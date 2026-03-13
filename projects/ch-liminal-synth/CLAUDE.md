@@ -33,7 +33,6 @@ Once all inputs are confirmed, calculate segment duration and begin the pipeline
 |-----------|------|
 | Image framework | `frameworks/image-framework.md` |
 | Music framework | `frameworks/music-framework.md` |
-| Thumbnail formula | `frameworks/thumbnail-formula.md` |
 | Title formula | `frameworks/title-formula.md` |
 | Description & hashtags | `shared/description-formula.md` (project root) |
 
@@ -85,14 +84,7 @@ Agent: `@video-compiler`
 - Transitions: crossfade between segments (audio + video)
 - Output: single stitched video at full session duration
 
-### Step 5 — Thumbnail Generation
-Agent: `@video-compiler`
-- Read `frameworks/thumbnail-formula.md`
-- Select strongest image from Step 2
-- Music-only style: visual-focused, minimal or no text overlay per formula
-- Output: thumbnail image file
-
-### Step 6 — Title, Description & Tags
+### Step 5 — Title, Description & Tags
 Agent: `@script-writer`
 - Read `frameworks/title-formula.md` → generate title
 - Read `shared/description-formula.md` → generate description
@@ -100,13 +92,13 @@ Agent: `@script-writer`
 - Generate hashtags per description formula
 - Output: title, description, tags as separate fields
 
-### Step 7 — Telegram Checkpoint 2
+### Step 6 — Telegram Checkpoint 2
 Agent: `@channel-manager`
-- Send final compiled video, thumbnail, title, description, and tags via Telegram
+- Send final compiled video, title, description, and tags via Telegram
 - Wait for user response: `approve` then schedule time
-- On approve + time received: proceed to Step 8
+- On approve + time received: proceed to Step 7
 
-### Step 8 — Schedule & Post
+### Step 7 — Schedule & Post
 Agent: `@channel-manager`
 - Schedule video via YouTube Data API at provided time
 - Confirm scheduled post back to user via Telegram

@@ -79,11 +79,19 @@ router.post('/:slug/oauth/start', async (req: Request, res: Response) => {
       return;
     }
 
-    const clientId = process.env.YOUTUBE_CLIENT_ID;
-    const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
+    // Per-channel OAuth: read from channel's .youtube-oauth.json first, fall back to .env
+    let clientId = process.env.YOUTUBE_CLIENT_ID;
+    let clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
+
+    const oauthPath = join(channelDir, '.youtube-oauth.json');
+    if (existsSync(oauthPath)) {
+      const oauthData = await readJsonFile<{ web?: { client_id?: string; client_secret?: string } }>(oauthPath);
+      if (oauthData.web?.client_id) clientId = oauthData.web.client_id;
+      if (oauthData.web?.client_secret) clientSecret = oauthData.web.client_secret;
+    }
 
     if (!clientId || !clientSecret) {
-      res.status(400).json({ error: 'YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET must be set in .env' });
+      res.status(400).json({ error: 'No OAuth credentials found in channel .youtube-oauth.json or .env' });
       return;
     }
 
@@ -130,7 +138,6 @@ router.post('/:slug/oauth/start', async (req: Request, res: Response) => {
     }
 
     // Save tokens alongside the client credentials
-    const oauthPath = join(channelDir, '.youtube-oauth.json');
     let existing: Record<string, unknown> = {};
     if (existsSync(oauthPath)) {
       existing = await readJsonFile<Record<string, unknown>>(oauthPath);

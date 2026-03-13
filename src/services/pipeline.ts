@@ -37,7 +37,7 @@ import {
 } from './ffmpeg-service.js';
 import { generateThumbnailNB2 } from './nanobana-service.js';
 import { uploadVideo } from './youtube-service.js';
-import { sendApprovalRequest, pollForApproval, sendVideo, sendPhoto } from './telegram-service.js';
+import { sendApprovalRequest, pollForApproval, sendVideo, sendPhoto, sendAudio } from './telegram-service.js';
 
 const execFileAsync = promisify(execFile);
 const log = createLogger('pipeline');
@@ -84,6 +84,17 @@ export async function runPipeline(
     context.assetManifest = assetResult.manifest;
     await writeJsonFile(join(outputDir, 'asset-manifest.json'), context.assetManifest);
 
+    // Stage: Asset Preview (Telegram Checkpoint 1 — approve assets before compilation)
+    if (config.channel.format === 'music-only' && context.assetManifest) {
+      await updateStage(status, 'asset_preview', outputDir);
+      log.info('Sending asset previews to Telegram for approval');
+      const assetApproved = await sendAssetPreview(config, context.assetManifest, contentPlan);
+      if (!assetApproved) {
+        throw new PipelineError('Assets rejected during preview', 'asset_preview');
+      }
+      log.info('Assets approved — proceeding to compilation');
+    }
+
     // Stage: Compilation
     await updateStage(status, 'compilation', outputDir);
     log.info('Starting video compilation');
@@ -91,6 +102,15 @@ export async function runPipeline(
       config, channelDir, outputDir, context.assetManifest, scriptOutput, assetResult.teaserManifest
     );
     await writeJsonFile(join(outputDir, 'compilation-result.json'), context.compilationResult);
+
+    // Stage: Metadata Generation (music-only channels generate title/desc/tags from frameworks)
+    if (config.channel.format === 'music-only') {
+      await updateStage(status, 'metadata_generation', outputDir);
+      log.info('Generating metadata from frameworks');
+      await generateMusicOnlyMetadata(config, channelDir, contentPlan, scriptOutput, context.compilationResult);
+      await writeJsonFile(join(outputDir, 'script-output.json'), scriptOutput);
+      log.info(`Metadata generated — title: "${scriptOutput.title}"`);
+    }
 
     // Stage: Approval
     await updateStage(status, 'approval', outputDir);
@@ -207,7 +227,7 @@ async function generateAssets(
     const segmentCount = contentPlan.segmentCount ?? 1;
     const totalDuration = contentPlan.targetDurationSeconds;
     const segmentDuration = Math.floor(totalDuration / segmentCount);
-    const musicDuration = Math.min(segmentDuration, 120); // Stable Audio max ~190s, use 120s
+    const musicDuration = Math.min(segmentDuration, 190); // Stable Audio 2.5 max 190s
     const prompts = contentPlan.musicOnlyPrompts;
 
     log.info(`Music-only pipeline: ${segmentCount} segment(s), ${segmentDuration}s each, ${totalDuration}s total`);
@@ -375,7 +395,7 @@ async function compileVideo(
   let result: CompilationResult;
 
   if (format === 'music-only') {
-    result = await compileMusicOnlyVideo(outputDir, manifest);
+    result = await compileMusicOnlyVideo(outputDir, manifest, '1920x1080', config.visualFilter);
   } else if (format === 'short') {
     result = await compileShortFormVideo({
       outputDir,
@@ -459,6 +479,209 @@ function buildThumbnailPrompt(
   ].join('\n');
 }
 
+/**
+ * Telegram Checkpoint 1: Send asset previews for approval before compilation.
+ * Sends one image + one music sample per segment. Waits for approve/reject.
+ */
+async function sendAssetPreview(
+  config: ChannelConfig,
+  manifest: AssetManifest,
+  contentPlan: ContentPlan
+): Promise<boolean> {
+  const segmentCount = contentPlan.segmentCount ?? 1;
+
+  // Send each segment's image and a short music preview
+  for (let i = 0; i < Math.min(segmentCount, manifest.images.length); i++) {
+    const image = manifest.images[i];
+    const music = manifest.music[i];
+    const animation = manifest.animations[i];
+    const segLabel = segmentCount > 1 ? `Segment ${i + 1}/${segmentCount}` : 'Preview';
+
+    if (image) {
+      await sendPhoto(image.path, `🖼 ${segLabel} — Image`);
+    }
+    if (animation) {
+      await sendVideo(animation.path, `🎞 ${segLabel} — Animation`);
+    }
+    if (music) {
+      await sendAudio(music.path, `🎵 ${segLabel} — Music`);
+    }
+  }
+
+  // Send prompts used so user can review what was sent to APIs
+  const prompts = contentPlan.musicOnlyPrompts;
+  const promptSummary = [
+    `📋 Prompts Used:`,
+    `🖼 Image: ${prompts?.imagePrompt?.slice(0, 200) ?? 'default'}`,
+    `🎵 Music: ${prompts?.musicPrompt ?? 'default'}`,
+    `🎞 Animation: ${prompts?.animationPrompt ?? 'default'}`,
+  ].join('\n');
+  await sendApprovalRequest({
+    videoTitle: promptSummary,
+    youtubeUrl: '',
+    channelName: config.channel.name,
+  });
+
+  const messageId = await sendApprovalRequest({
+    videoTitle: `Asset Preview — ${config.channel.name}`,
+    youtubeUrl: '',
+    channelName: config.channel.name,
+  });
+
+  const approved = await pollForApproval(messageId);
+  return approved;
+}
+
+/**
+ * Generate title, description, tags, and hashtags for music-only channels.
+ * Reads title-formula.md and description-formula.md frameworks, then builds
+ * metadata based on the content plan prompts and compilation result.
+ * Mutates scriptOutput in place.
+ */
+async function generateMusicOnlyMetadata(
+  _config: ChannelConfig,
+  _channelDir: string,
+  contentPlan: ContentPlan,
+  scriptOutput: ScriptOutput,
+  compilation: CompilationResult
+): Promise<void> {
+  const prompts = contentPlan.musicOnlyPrompts;
+  const topic = contentPlan.topic;
+  const segmentCount = contentPlan.segmentCount ?? 1;
+  const totalDuration = compilation.durationSeconds;
+
+  // Extract keywords from prompts for SEO
+  const imageWords = prompts?.imagePrompt?.split(/[\s,]+/).filter(w => w.length > 3) ?? [];
+  const musicWords = prompts?.musicPrompt?.split(/[\s,]+/).filter(w => w.length > 3) ?? [];
+  const allKeywords = [...new Set([...imageWords, ...musicWords])];
+
+  // Build genre/mood from music prompt
+  const musicPrompt = prompts?.musicPrompt ?? topic;
+  const genreMatch = musicPrompt.match(/^([^,]+)/);
+  const genre = genreMatch?.[1]?.trim() ?? topic;
+
+  // Extract mood descriptors from music prompt
+  const moodWords = ['Melancholic', 'Atmospheric', 'Energetic', 'Dark', 'Ethereal',
+    'Dreamy', 'Intense', 'Calm', 'Mysterious', 'Euphoric', 'Nostalgic', 'Cool',
+    'Ambient', 'Cinematic', 'Epic', 'Chill', 'Uplifting', 'Haunting'];
+  const moods = moodWords.filter(m => musicPrompt.toLowerCase().includes(m.toLowerCase()));
+  const moodStr = moods.length > 0 ? moods.slice(0, 2).join(' & ') : 'Atmospheric';
+
+  // Extract BPM if present
+  const bpmMatch = musicPrompt.match(/(\d+)\s*BPM/i);
+  const bpm = bpmMatch?.[1] ?? '';
+
+  // Format duration for display
+  const hours = Math.floor(totalDuration / 3600);
+  const minutes = Math.floor((totalDuration % 3600) / 60);
+  const durationStr = hours > 0
+    ? `${hours}h ${minutes}m`
+    : `${minutes} min`;
+
+  // --- Generate Title ---
+  // Use title formula patterns: keyword front-loaded, 50-60 chars, curiosity/specificity
+  const titleCandidates = [
+    `${genre} — ${moodStr} ${topic} Mix`,
+    `${topic}: ${durationStr} of ${moodStr} ${genre}`,
+    `${moodStr} ${genre} | ${topic} Session`,
+    `${genre} — ${segmentCount > 1 ? `${segmentCount} Scenes` : 'Full Session'} [${durationStr}]`,
+  ];
+  // Pick shortest title that's under 70 chars and over 20 chars
+  const title = titleCandidates.find(t => t.length >= 20 && t.length <= 70) ?? titleCandidates[0]!;
+  scriptOutput.title = title.slice(0, 70);
+  log.info(`Generated title: "${scriptOutput.title}" (${scriptOutput.title.length} chars)`);
+
+  // --- Generate Tags ---
+  const baseTags = [
+    topic.toLowerCase(),
+    genre.toLowerCase(),
+    ...moods.map(m => m.toLowerCase()),
+    'ambient', 'music', 'mix',
+  ];
+  if (bpm) baseTags.push(`${bpm}bpm`);
+  // Add relevant keywords from prompts (cleaned)
+  const cleanKeywords = allKeywords
+    .map(w => w.toLowerCase().replace(/[^a-z0-9]/g, ''))
+    .filter(w => w.length > 3 && !baseTags.includes(w));
+  scriptOutput.tags = [...new Set([...baseTags, ...cleanKeywords.slice(0, 10)])].slice(0, 20);
+
+  // --- Generate Hashtags ---
+  // Mix broad + niche, 3-5 hashtags per formula
+  const broadHashtags = [`#${genre.replace(/\s+/g, '')}`, '#ambient', '#music'];
+  const nicheHashtags = moods.slice(0, 2).map(m => `#${m.toLowerCase()}`);
+  scriptOutput.hashtags = [...new Set([...broadHashtags, ...nicheHashtags])].slice(0, 5);
+
+  // --- Generate Description ---
+  // Follow description-formula.md structure:
+  // 1. Compelling one-liner
+  // 2. Video summary
+  // 3. Timestamps/chapters (if multi-segment)
+  // 4. Links section
+  // 5. Hashtags
+  const oneLiner = `${moodStr} ${genre.toLowerCase()} — ${durationStr} of immersive ${topic.toLowerCase()} to study, relax, or drift away to.`;
+
+  const summary = [
+    `${segmentCount > 1 ? `${segmentCount} unique scenes` : 'A single immersive scene'} of ${genre.toLowerCase()},`,
+    `each with distinct visuals and ${bpm ? `${bpm} BPM` : 'ambient'} production.`,
+    prompts?.imagePrompt ? `Visual direction: ${prompts.imagePrompt.split('.')[0]}.` : '',
+  ].filter(Boolean).join(' ');
+
+  const descParts = [oneLiner, '', summary];
+
+  // Chapter markers for multi-segment
+  // YouTube requires: first chapter at 0:00, min 3 chapters, min 10s each
+  if (segmentCount > 1) {
+    descParts.push('');
+    const CROSSFADE = 3.0; // matches SEGMENT_CROSSFADE in ffmpeg-service
+    const segDuration = totalDuration / segmentCount;
+
+    // Abstract song names — placeholder pool until prompt-driven generation is wired in
+    // TODO: Replace with prompt-interpreted names once prompt structure is finalized
+    const SCENE_NAMES = [
+      'Neon Drift',
+      'Chrome Horizon',
+      'Vapor Circuit',
+      'Midnight Signal',
+      'Pulse Decay',
+      'Static Bloom',
+      'Phantom Grid',
+      'Hollow Frequency',
+      'Afterglow',
+      'Terminal Haze',
+      'Silhouette',
+      'Data Rain',
+      'Ghost Protocol',
+      'Solar Wind',
+      'Echo Chamber',
+    ];
+
+    for (let i = 0; i < segmentCount; i++) {
+      const offsetSec = i === 0 ? 0 : Math.round(i * segDuration - i * CROSSFADE);
+      const h = Math.floor(offsetSec / 3600);
+      const m = Math.floor((offsetSec % 3600) / 60);
+      const s = offsetSec % 60;
+      const ts = h > 0
+        ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+        : `${m}:${String(s).padStart(2, '0')}`;
+      const sceneName = SCENE_NAMES[i % SCENE_NAMES.length];
+      descParts.push(`${ts} ${sceneName}`);
+    }
+  }
+
+  // Links placeholder
+  descParts.push(
+    '',
+    '---',
+    'Subscribe for more ambient music sessions.',
+  );
+
+  // Hashtags at end
+  descParts.push('', scriptOutput.hashtags.join(' '));
+
+  scriptOutput.description = descParts.join('\n');
+  log.info(`Generated description (${scriptOutput.description.length} chars, ${segmentCount} chapters)`);
+}
+
 async function publishWithApproval(
   config: ChannelConfig,
   compilation: CompilationResult,
@@ -492,13 +715,26 @@ async function publishWithApproval(
     log.warn('Preview clip failed, skipping video in Telegram');
   }
 
-  const caption = [
+  const durationMin = Math.floor(compilation.durationSeconds / 60);
+  const durationSec = compilation.durationSeconds % 60;
+  const durationDisplay = durationMin > 0
+    ? `${durationMin}m ${durationSec}s`
+    : `${durationSec}s`;
+
+  const captionParts = [
     `🎬 ${scriptOutput.title}`,
     `📺 ${config.channel.name}`,
-    `⏱ ${compilation.durationSeconds}s total (${PREVIEW_SECONDS}s preview)`,
+    `⏱ ${durationDisplay} (${PREVIEW_SECONDS}s preview)`,
     '',
-    'Reply "approve" to publish or "reject" to discard.',
-  ].join('\n');
+    `📝 Description:`,
+    scriptOutput.description.slice(0, 500) + (scriptOutput.description.length > 500 ? '...' : ''),
+    '',
+    `🏷 Tags: ${scriptOutput.tags.slice(0, 10).join(', ')}`,
+    `# ${scriptOutput.hashtags.join(' ')}`,
+    '',
+    'Reply /approve to publish or /reject to discard.',
+  ];
+  const caption = captionParts.join('\n');
 
   const { stat: statFile } = await import('fs/promises');
   try {
@@ -507,7 +743,7 @@ async function publishWithApproval(
   } catch {
     log.warn('No preview clip to send');
   }
-  if (compilation.thumbnailPath) {
+  if (compilation.thumbnailPath && config.channel.format !== 'music-only') {
     await sendPhoto(compilation.thumbnailPath, `Thumbnail: ${scriptOutput.title}`);
   }
 

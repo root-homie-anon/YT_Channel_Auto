@@ -2,7 +2,6 @@ import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { createReadStream } from 'fs';
 
 // Load dotenv first
 import { config } from 'dotenv';
@@ -47,11 +46,6 @@ async function sendTelegramVideo(videoPath: string, caption: string): Promise<vo
     return;
   }
 
-  // Use multipart form upload
-  const FormData = (await import('node-fetch')).default ? undefined : undefined;
-
-  // Use native fetch with FormData
-  const { Readable } = await import('stream');
   const { stat } = await import('fs/promises');
 
   const stats = await stat(videoPath);

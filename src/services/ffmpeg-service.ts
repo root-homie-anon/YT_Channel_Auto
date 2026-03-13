@@ -6,13 +6,14 @@ import { promisify } from 'util';
 import { CompilationError } from '../errors/index.js';
 import { AssetManifest, CompilationResult, ScriptSection } from '../types/index.js';
 import { ensureDir } from '../utils/file-helpers.js';
+import { getFilterPreset } from '../utils/visual-filters.js';
 import { createLogger } from '../utils/logger.js';
 
 const execFileAsync = promisify(execFile);
 const log = createLogger('ffmpeg-service');
 
 const CROSSFADE_DURATION = 0.8; // seconds of crossfade between images
-const SEGMENT_CROSSFADE = 1.5; // seconds of crossfade between music-only segments
+const SEGMENT_CROSSFADE = 3.0; // seconds of crossfade between music-only segments
 
 const ANIM_SLOWDOWN = 1.33; // Slow animation to ~75% speed for ambient feel
 
@@ -353,7 +354,8 @@ export async function compileShortFormVideo(options: CompileOptions): Promise<Co
 export async function compileMusicOnlyVideo(
   outputDir: string,
   manifest: AssetManifest,
-  resolution = '1920x1080'
+  resolution = '1920x1080',
+  visualFilterPreset?: string
 ): Promise<CompilationResult> {
   await ensureDir(outputDir);
   const videoPath = join(outputDir, 'music-video.mp4');
@@ -366,6 +368,13 @@ export async function compileMusicOnlyVideo(
     if (segmentCount > 1) {
       // -- Multi-segment: compile each segment, then concatenate --
       const segmentPaths: string[] = [];
+
+      // Trim trailing silence from all music tracks before compilation
+      for (const music of manifest.music) {
+        if (music?.path) {
+          await trimTrailingSilence(music.path);
+        }
+      }
 
       for (let i = 0; i < segmentCount; i++) {
         const pad = String(i).padStart(3, '0');
@@ -523,6 +532,34 @@ export async function compileMusicOnlyVideo(
       }
     }
 
+    // Apply visual filters as post-processing pass
+    const filterPreset = visualFilterPreset ? getFilterPreset(visualFilterPreset) : null;
+    if (filterPreset && filterPreset.filters.length > 0) {
+      log.info(`Applying visual filter preset: ${filterPreset.name}`);
+      const filteredPath = videoPath.replace('.mp4', '-filtered.mp4');
+      const filterChain = filterPreset.filters.join(';');
+
+      const filterArgs = [
+        '-i', videoPath,
+        '-filter_complex', filterChain,
+        '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+        '-c:a', 'copy',
+        '-movflags', '+faststart',
+        '-y', filteredPath,
+      ];
+
+      try {
+        await runFfmpeg(filterArgs);
+        // Replace original with filtered version
+        const { rename: renameFile } = await import('fs/promises');
+        await renameFile(filteredPath, videoPath);
+        log.info(`Visual filters applied: ${filterPreset.name}`);
+      } catch (filterErr) {
+        log.warn(`Visual filter pass failed (non-fatal): ${(filterErr as Error).message}`);
+        // Original video remains intact
+      }
+    }
+
     const stats = await stat(videoPath);
     const duration = await getVideoDuration(videoPath);
 
@@ -593,5 +630,61 @@ async function getVideoDuration(videoPath: string): Promise<number> {
     return Math.round(parseFloat(stdout.trim()));
   } catch {
     return 0;
+  }
+}
+
+/**
+ * Trim trailing silence from an audio file.
+ * Uses silencedetect to find the last non-silent moment, then trims.
+ * Returns the path to the trimmed file (overwrites in place).
+ */
+async function trimTrailingSilence(audioPath: string): Promise<void> {
+  try {
+    // Detect silence periods (threshold -40dB, min duration 1s)
+    const { stderr } = await execFileAsync('ffmpeg', [
+      '-i', audioPath,
+      '-af', 'silencedetect=noise=-40dB:d=1',
+      '-f', 'null', '-',
+    ], { maxBuffer: 10 * 1024 * 1024 });
+
+    // Parse silence_start entries — find the last one
+    const silenceStarts = [...stderr.matchAll(/silence_start:\s*([\d.]+)/g)].map(m => parseFloat(m[1]));
+    if (silenceStarts.length === 0) {
+      log.debug(`No trailing silence detected in ${audioPath}`);
+      return;
+    }
+
+    const lastSilenceStart = silenceStarts[silenceStarts.length - 1];
+    // Add a small fade-out buffer (0.5s) so it doesn't cut abruptly
+    const trimPoint = lastSilenceStart + 0.5;
+
+    // Get total duration to check if silence is actually at the end
+    const { stdout: durationOut } = await execFileAsync('ffprobe', [
+      '-v', 'quiet', '-show_entries', 'format=duration', '-of', 'csv=p=0', audioPath,
+    ]);
+    const totalDuration = parseFloat(durationOut.trim());
+    const silenceDuration = totalDuration - lastSilenceStart;
+
+    // Only trim if trailing silence is > 2 seconds
+    if (silenceDuration < 2) {
+      log.debug(`Trailing silence only ${silenceDuration.toFixed(1)}s — skipping trim`);
+      return;
+    }
+
+    log.info(`Trimming ${silenceDuration.toFixed(1)}s trailing silence from ${audioPath} (cut at ${trimPoint.toFixed(1)}s)`);
+
+    const trimmedPath = audioPath.replace(/(\.\w+)$/, '-trimmed$1');
+    await execFileAsync('ffmpeg', [
+      '-i', audioPath,
+      '-t', String(trimPoint),
+      '-af', `afade=t=out:st=${Math.max(0, trimPoint - 1)}:d=1`,
+      '-y', trimmedPath,
+    ], { maxBuffer: 10 * 1024 * 1024 });
+
+    // Replace original with trimmed
+    const { rename } = await import('fs/promises');
+    await rename(trimmedPath, audioPath);
+  } catch (err) {
+    log.warn(`Silence trim failed (non-fatal): ${(err as Error).message}`);
   }
 }

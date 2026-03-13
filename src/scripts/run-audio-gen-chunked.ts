@@ -87,7 +87,7 @@ async function main(): Promise<void> {
         stockFootage.push({
           id: f.replace(/\.[^.]+$/, ''),
           path: join(stockDir, f),
-          type: 'video',
+          type: 'animation',
         });
       }
     }

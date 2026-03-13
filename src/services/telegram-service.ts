@@ -173,7 +173,7 @@ async function sendFile(
   const fileBuffer = await new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
     const stream = createReadStream(filePath);
-    stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+    stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
     stream.on('end', () => resolve(Buffer.concat(chunks)));
     stream.on('error', reject);
   });

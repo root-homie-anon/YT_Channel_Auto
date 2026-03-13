@@ -77,6 +77,7 @@ export function buildConfig(inputs: ChannelInputs, oauthPath: string): ChannelCo
       title: 'frameworks/title-formula.md',
       ...(includesShorts && { teaser: 'frameworks/teaser-formula.md' }),
     },
+    visualFilter: 'none',
   };
 
   return config;

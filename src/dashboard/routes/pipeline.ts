@@ -61,6 +61,7 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
       title: topic,
       description: topic,
       tags: [],
+      hashtags: [],
       script: [{ sectionName: 'main', narration: '', imageCue: imagePrompt || topic }],
     } : null);
 

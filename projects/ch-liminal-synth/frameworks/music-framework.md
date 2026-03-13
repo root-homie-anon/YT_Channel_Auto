@@ -39,24 +39,26 @@ Stable Audio 2.5 works best with concise, natural-language prompts. No labeled s
 ### Track A Prompt Template (background under VO)
 
 ```
-[Category name] instrumental, [primary instruments], [BPM] BPM, [user direction if any], no lyrics, background ambient
+[primary instruments], [BPM] BPM, [user direction if any], background ambient
 ```
 
-Example: `Lofi Study instrumental, lo-fi piano, soft drums, vinyl crackle, 75 BPM, no lyrics, background ambient`
+Example: `lo-fi piano, soft drums, vinyl crackle, 75 BPM, background ambient`
 
 ### Track B Prompt Template (primary content, music-only channels)
 
 ```
-[Category name] instrumental, [primary instruments], [BPM] BPM, [user direction if any], no lyrics
+[primary instruments], [mood descriptors], [BPM] BPM, [user direction if any]
 ```
 
-Example: `Synthwave instrumental, synthesizer arpeggios, gated reverb drums, bass synth, 110 BPM, driving neon-lit mood, no lyrics`
+Example: `Synthesizer arpeggios, gated reverb drums, bass synth, Melancholic, Atmospheric, 110 BPM, driving neon-lit mood`
 
 ### Key rules
 - Max 190 seconds per generation — loop or stitch for longer durations
 - Keep prompts under 200 characters for best results
 - Comma-separated natural language, not labeled fields
-- Genre + instruments + tempo + mood is the core formula
+- Instruments + mood + tempo is the core formula
+- Do NOT prefix with genre name (e.g. "Synthwave instrumental") — let the instruments and descriptors define the genre
+- Do NOT append "no lyrics" — unnecessary and may constrain output
 
 ---
 
