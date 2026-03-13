@@ -21,7 +21,7 @@ export async function generateImage(options: FluxGenerateOptions): Promise<Asset
   const apiKey = requireEnv('FLUX_API_KEY');
   const apiUrl = requireEnv('FLUX_API_URL');
 
-  const { prompt, width = 1408, height = 768, outputPath } = options;
+  const { prompt, width = 1280, height = 720, outputPath } = options;
 
   log.info(`Generating image: "${prompt.slice(0, 80)}..."`);
   await ensureDir(join(outputPath, '..'));
@@ -183,8 +183,8 @@ export async function generateBatchImages(
           try {
             portraitAsset = await generateImage({
               prompt: `${enhancedPrompt}, vertical composition, portrait orientation`,
-              width: 768,
-              height: 1408,
+              width: 720,
+              height: 1280,
               outputPath: portraitPath,
             });
           } catch (err) {
@@ -192,7 +192,7 @@ export async function generateBatchImages(
             if (msg.includes('Content Moderated')) {
               log.warn(`Portrait image ${i} moderated, retrying with simplified prompt`);
               const safePrompt = `Dark atmospheric scene, dramatic shadows and light, vertical composition, portrait orientation, ${styleTag}`;
-              portraitAsset = await generateImage({ prompt: safePrompt, width: 768, height: 1408, outputPath: portraitPath });
+              portraitAsset = await generateImage({ prompt: safePrompt, width: 720, height: 1280, outputPath: portraitPath });
             } else { throw err; }
           }
           portrait.push({ ...portraitAsset, id: cue.id });
@@ -204,8 +204,8 @@ export async function generateBatchImages(
     try {
       landscapeAsset = await generateImage({
         prompt: enhancedPrompt,
-        width: 1408,
-        height: 768,
+        width: 1280,
+        height: 720,
         outputPath: landscapePath,
       });
     } catch (err) {
@@ -215,8 +215,8 @@ export async function generateBatchImages(
         const safePrompt = `Dark atmospheric scene, dramatic shadows and light, ${styleTag}`;
         landscapeAsset = await generateImage({
           prompt: safePrompt,
-          width: 1408,
-          height: 768,
+          width: 1280,
+          height: 720,
           outputPath: landscapePath,
         });
       } else if (msg.includes('402') || msg.includes('Insufficient credits')) {
@@ -243,8 +243,8 @@ export async function generateBatchImages(
       try {
         portraitAsset = await generateImage({
           prompt: `${enhancedPrompt}, vertical composition, portrait orientation`,
-          width: 768,
-          height: 1408,
+          width: 720,
+          height: 1280,
           outputPath: portraitPath,
         });
       } catch (err) {
@@ -254,8 +254,8 @@ export async function generateBatchImages(
           const safePrompt = `Dark atmospheric scene, dramatic shadows and light, vertical composition, portrait orientation, ${styleTag}`;
           portraitAsset = await generateImage({
             prompt: safePrompt,
-            width: 768,
-            height: 1408,
+            width: 720,
+            height: 1280,
             outputPath: portraitPath,
           });
         } else if (msg.includes('402') || msg.includes('Insufficient credits')) {

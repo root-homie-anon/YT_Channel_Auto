@@ -10,9 +10,11 @@ const DEFAULT_DURATIONS: Record<ChannelFormat, number> = {
 export interface MusicOnlyOptions {
   durationMinutes?: number;
   segmentCount?: number;
-  imagePrompt?: string;
-  musicPrompt?: string;
-  animationPrompt?: string;
+  imagePrompts: string[];
+  musicPrompt: string;
+  animationPrompts: string[];
+  lastEnvironment?: string;
+  lastAtmosphere?: string;
 }
 
 export function buildContentPlan(
@@ -34,16 +36,15 @@ export function buildContentPlan(
   };
 
   if (config.channel.format === 'music-only' && musicOptions) {
-    if (musicOptions.segmentCount && musicOptions.segmentCount > 1) {
-      plan.segmentCount = musicOptions.segmentCount;
-    }
-    const prompts: Record<string, string> = {};
-    if (musicOptions.imagePrompt) prompts.imagePrompt = musicOptions.imagePrompt;
-    if (musicOptions.musicPrompt) prompts.musicPrompt = musicOptions.musicPrompt;
-    if (musicOptions.animationPrompt) prompts.animationPrompt = musicOptions.animationPrompt;
-    if (Object.keys(prompts).length > 0) {
-      plan.musicOnlyPrompts = prompts as NonNullable<ContentPlan['musicOnlyPrompts']>;
-    }
+    plan.segmentCount = musicOptions.segmentCount ?? 1;
+    const prompts: ContentPlan['musicOnlyPrompts'] = {
+      imagePrompts: musicOptions.imagePrompts,
+      musicPrompt: musicOptions.musicPrompt,
+      animationPrompts: musicOptions.animationPrompts,
+    };
+    if (musicOptions.lastEnvironment) prompts!.lastEnvironment = musicOptions.lastEnvironment;
+    if (musicOptions.lastAtmosphere) prompts!.lastAtmosphere = musicOptions.lastAtmosphere;
+    plan.musicOnlyPrompts = prompts;
   }
 
   return plan;

@@ -50,7 +50,7 @@ Maximum 12 words. If you are writing more than 12 words, stop and simplify.
 5. Pass to runway.ts
 6. Generate minimum 3 clips per image
 7. Select strongest loop
-8. Log to production-brief.md
+8. Log output
 ```
 
 That is the entire workflow. No vision analysis step. No layering decisions. No intensity calibration.
@@ -108,7 +108,7 @@ Generate 3 clips minimum per image. Select the clip where:
 
 ## Output Logging
 
-Append to `production-brief.md` after each session:
+After each session, log:
 
 ```markdown
 ## Animation Log

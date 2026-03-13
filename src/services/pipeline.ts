@@ -36,6 +36,7 @@ import {
   compileMusicOnlyVideo,
 } from './ffmpeg-service.js';
 import { generateThumbnailNB2 } from './nanobana-service.js';
+import { advanceRotationState } from './rotation-state.js';
 import { uploadVideo } from './youtube-service.js';
 import { sendApprovalRequest, pollForApproval, sendVideo, sendPhoto, sendAudio } from './telegram-service.js';
 
@@ -102,6 +103,18 @@ export async function runPipeline(
       config, channelDir, outputDir, context.assetManifest, scriptOutput, assetResult.teaserManifest
     );
     await writeJsonFile(join(outputDir, 'compilation-result.json'), context.compilationResult);
+
+    // Advance rotation state after successful compilation (music-only)
+    if (config.channel.format === 'music-only' && contentPlan.musicOnlyPrompts) {
+      const segmentsConsumed = contentPlan.segmentCount ?? 1;
+      await advanceRotationState(
+        channelDir,
+        segmentsConsumed,
+        contentPlan.musicOnlyPrompts.lastEnvironment ?? '',
+        contentPlan.musicOnlyPrompts.lastAtmosphere ?? '',
+        productionId
+      );
+    }
 
     // Stage: Metadata Generation (music-only channels generate title/desc/tags from frameworks)
     if (config.channel.format === 'music-only') {
@@ -184,24 +197,6 @@ interface AssetGenerationResult {
   teaserManifest?: AssetManifest | undefined;
 }
 
-// -- Segment diversity pools for music-only multi-segment --
-const SHOT_VARIATIONS = [
-  'wide establishing shot',
-  'medium shot',
-  'close-up detail',
-  'low angle looking up',
-  'aerial overhead view',
-  'over-the-shoulder perspective',
-];
-
-const TIME_PROGRESSION = [
-  'golden hour warm light',
-  'twilight fading sky',
-  'night scene',
-  'deep night, minimal light',
-  'pre-dawn blue hour',
-];
-
 async function generateAssets(
   config: ChannelConfig,
   channelDir: string,
@@ -223,38 +218,57 @@ async function generateAssets(
   };
 
   // ========== MUSIC-ONLY: Multi-segment pipeline ==========
+  // All prompts come from contentPlan.musicOnlyPrompts — constructed by the agent
+  // using the channel's image-framework.md and animation-framework.md.
+  // This code does not construct, modify, or append to prompts.
   if (isMusicOnly && contentPlan) {
+    const prompts = contentPlan.musicOnlyPrompts;
+    if (!prompts) {
+      throw new PipelineError('Music-only pipeline requires musicOnlyPrompts in content plan', 'asset_generation');
+    }
+
     const segmentCount = contentPlan.segmentCount ?? 1;
     const totalDuration = contentPlan.targetDurationSeconds;
     const segmentDuration = Math.floor(totalDuration / segmentCount);
     const musicDuration = Math.min(segmentDuration, 190); // Stable Audio 2.5 max 190s
-    const prompts = contentPlan.musicOnlyPrompts;
+
+    // Validate prompt arrays match segment count
+    if (prompts.imagePrompts.length < segmentCount) {
+      throw new PipelineError(
+        `imagePrompts array (${prompts.imagePrompts.length}) must have at least ${segmentCount} entries`,
+        'asset_generation'
+      );
+    }
+    if (prompts.animationPrompts.length < segmentCount) {
+      throw new PipelineError(
+        `animationPrompts array (${prompts.animationPrompts.length}) must have at least ${segmentCount} entries`,
+        'asset_generation'
+      );
+    }
 
     log.info(`Music-only pipeline: ${segmentCount} segment(s), ${segmentDuration}s each, ${totalDuration}s total`);
 
     for (let i = 0; i < segmentCount; i++) {
       const pad = String(i).padStart(3, '0');
-      const shot = SHOT_VARIATIONS[i % SHOT_VARIATIONS.length];
-      const time = TIME_PROGRESSION[i % TIME_PROGRESSION.length];
 
-      // -- Image: apply diversity modifiers to base prompt --
-      const baseImagePrompt = prompts?.imagePrompt ?? scriptOutput.script[0]?.imageCue ?? contentPlan.topic;
-      const diverseImagePrompt = `${baseImagePrompt}. ${shot}, ${time}`;
-      log.info(`Segment ${i}: image prompt = "${diverseImagePrompt.slice(0, 80)}..."`);
+      // -- Image: prompt comes from agent, passed through unchanged --
+      const imagePrompt = prompts.imagePrompts[i];
+      log.info(`Segment ${i}: image prompt = "${imagePrompt.slice(0, 80)}..."`);
 
       const imageAsset = await generateImage({
-        prompt: diverseImagePrompt,
+        prompt: imagePrompt,
         outputPath: join(outputDir, 'images', `image-${pad}.png`),
       });
       manifest.images.push(imageAsset);
 
-      // -- Animation: Runway ML --
+      // -- Animation: Runway Gen-4 Turbo --
+      // Prompt comes from agent (selected from animation-framework.md confirmed library)
       if (process.env.RUNWAY_API_KEY) {
         try {
           const imageData = await readFile(imageAsset.path);
           const base64 = imageData.toString('base64');
           const dataUri = `data:image/png;base64,${base64}`;
-          const animPrompt = prompts?.animationPrompt ?? 'Slow ambient motion, light pulses, fog drift, reflections shimmer. Static camera, no panning, no traveling motion. Loop-friendly';
+          const animPrompt = prompts.animationPrompts[i];
 
           const animAsset = await generateAnimation({
             imageUrl: dataUri,
@@ -269,11 +283,11 @@ async function generateAssets(
       }
 
       // -- Music: Stable Audio 2.5 --
-      const musicPromptText = prompts?.musicPrompt ?? buildMusicPrompt(scriptOutput, musicFramework, musicDuration);
-      log.info(`Segment ${i}: music prompt = "${musicPromptText.slice(0, 80)}..." (${musicDuration}s)`);
+      // Single music prompt used for all segments (same sonic identity)
+      log.info(`Segment ${i}: music prompt = "${prompts.musicPrompt.slice(0, 80)}..." (${musicDuration}s)`);
 
       const musicAsset = await generateMusicStableAudio({
-        prompt: musicPromptText,
+        prompt: prompts.musicPrompt,
         durationSeconds: musicDuration,
         outputPath: join(outputDir, 'music', `music-${pad}.wav`),
       });
@@ -512,9 +526,9 @@ async function sendAssetPreview(
   const prompts = contentPlan.musicOnlyPrompts;
   const promptSummary = [
     `📋 Prompts Used:`,
-    `🖼 Image: ${prompts?.imagePrompt?.slice(0, 200) ?? 'default'}`,
-    `🎵 Music: ${prompts?.musicPrompt ?? 'default'}`,
-    `🎞 Animation: ${prompts?.animationPrompt ?? 'default'}`,
+    `🖼 Image (${prompts?.imagePrompts.length ?? 0} prompts): ${prompts?.imagePrompts[0]?.slice(0, 200) ?? 'none'}`,
+    `🎵 Music: ${prompts?.musicPrompt ?? 'none'}`,
+    `🎞 Animation (${prompts?.animationPrompts.length ?? 0} prompts): ${prompts?.animationPrompts[0]?.slice(0, 100) ?? 'none'}`,
   ].join('\n');
   await sendApprovalRequest({
     videoTitle: promptSummary,
@@ -551,7 +565,7 @@ async function generateMusicOnlyMetadata(
   const totalDuration = compilation.durationSeconds;
 
   // Extract keywords from prompts for SEO
-  const imageWords = prompts?.imagePrompt?.split(/[\s,]+/).filter(w => w.length > 3) ?? [];
+  const imageWords = prompts?.imagePrompts[0]?.split(/[\s,]+/).filter(w => w.length > 3) ?? [];
   const musicWords = prompts?.musicPrompt?.split(/[\s,]+/).filter(w => w.length > 3) ?? [];
   const allKeywords = [...new Set([...imageWords, ...musicWords])];
 
@@ -623,7 +637,7 @@ async function generateMusicOnlyMetadata(
   const summary = [
     `${segmentCount > 1 ? `${segmentCount} unique scenes` : 'A single immersive scene'} of ${genre.toLowerCase()},`,
     `each with distinct visuals and ${bpm ? `${bpm} BPM` : 'ambient'} production.`,
-    prompts?.imagePrompt ? `Visual direction: ${prompts.imagePrompt.split('.')[0]}.` : '',
+    prompts?.imagePrompts[0] ? `Visual direction: ${prompts.imagePrompts[0].split('.')[0]}.` : '',
   ].filter(Boolean).join(' ');
 
   const descParts = [oneLiner, '', summary];

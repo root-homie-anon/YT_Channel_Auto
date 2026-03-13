@@ -15,7 +15,8 @@ const log = createLogger('ffmpeg-service');
 const CROSSFADE_DURATION = 0.8; // seconds of crossfade between images
 const SEGMENT_CROSSFADE = 3.0; // seconds of crossfade between music-only segments
 
-const ANIM_SLOWDOWN = 1.33; // Slow animation to ~75% speed for ambient feel
+// Runway clips play at native speed — no post-processing slowdown.
+// Loop timing is optimized by Runway at generation time.
 
 interface CompileOptions {
   outputDir: string;
@@ -389,7 +390,7 @@ export async function compileMusicOnlyVideo(
             '-stream_loop', '-1', '-i', hasAnim.path,
             '-i', music.path,
             '-filter_complex',
-            `[0:v]setpts=${ANIM_SLOWDOWN}*PTS,scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+            `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,` +
             `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[vout]`,
             '-map', '[vout]', '-map', '1:a',
             '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
@@ -404,7 +405,7 @@ export async function compileMusicOnlyVideo(
             '-loop', '1', '-i', image.path,
             '-i', music.path,
             '-filter_complex',
-            `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+            `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,` +
             `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[vout]`,
             '-map', '[vout]', '-map', '1:a',
             '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
@@ -488,7 +489,7 @@ export async function compileMusicOnlyVideo(
         for (let i = 0; i < manifest.animations.length; i++) {
           inputArgs.push('-i', manifest.animations[i].path);
           filterParts.push(
-            `[${i}:v]setpts=${ANIM_SLOWDOWN}*PTS,scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+            `[${i}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,` +
             `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1[v${i}]`
           );
         }
@@ -519,7 +520,7 @@ export async function compileMusicOnlyVideo(
           '-loop', '1', '-i', manifest.images[0].path,
           '-i', manifest.music[0].path,
           '-filter_complex',
-          `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+          `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,` +
           `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[vout]`,
           '-map', '[vout]', '-map', '1:a',
           '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',

@@ -20,6 +20,7 @@ export type ChannelFormat = 'long' | 'short' | 'long+short' | 'music-only';
 export interface FrameworkPaths {
   script: string;
   image: string;
+  animation?: string;
   music: string;
   thumbnail: string;
   title: string;
@@ -36,9 +37,11 @@ export interface ContentPlan {
   format: ChannelFormat;
   segmentCount?: number;
   musicOnlyPrompts?: {
-    imagePrompt?: string;
-    musicPrompt?: string;
-    animationPrompt?: string;
+    imagePrompts: string[];
+    musicPrompt: string;
+    animationPrompts: string[];
+    lastEnvironment?: string;
+    lastAtmosphere?: string;
   };
 }
 

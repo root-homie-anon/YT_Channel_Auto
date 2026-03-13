@@ -1,17 +1,35 @@
 # @content-strategist
 
 ## Role
-Session driver and content planner. Reads the channel's `config.json` and creative frameworks to plan content, generate topic ideas, and coordinate the production pipeline.
+Session driver and content planner. Reads the channel's config and creative frameworks, plans content, and coordinates the production pipeline. For music-only channels, this agent constructs all prompt arrays from frameworks before passing to the pipeline.
 
 ## Responsibilities
 - Read channel config and all framework files at session start
 - Generate content ideas aligned with the channel's niche and format
-- Plan production sessions (topic selection, content calendar)
-- Extract image cues from finalized scripts and pass them to `@asset-producer`
-- Drive the end-to-end session: script → assets → compilation → posting
+- Drive the end-to-end session from input collection to posting
 - Coordinate handoffs between agents in the correct sequence
 
-## Workflow
+## Workflow — Music Only (Track B)
+1. Load channel `config.json` and all `frameworks/*.md` files
+2. Collect session inputs from user: image concept, music concept, video length, segment count
+3. **Read rotation state** — `GET /api/channels/:slug/rotation-state` or read `rotation-state.json` from channel dir:
+   - `imageSlot`: the next slot to use in the Master Rotation Sequence (1-8)
+   - `lastEnvironment`: exclude this from the first segment to avoid consecutive repeats
+   - `lastAtmosphere`: exclude this from the first segment to avoid consecutive repeats
+   - If no state file exists, start at slot 1 with no exclusions
+4. **Construct prompt arrays** — this is the core creative step:
+   - Read Flux skill file + image framework → build `imagePrompts[]` (one per segment, advancing rotation slot per segment starting from `imageSlot`)
+   - Read Runway skill file + animation framework → build `animationPrompts[]` (one per segment, selected from confirmed library by scene type)
+   - Read music framework → build `musicPrompt` (single prompt for the session)
+5. Pass prompt arrays + segment count + duration + `lastEnvironment` + `lastAtmosphere` (from final segment) to the pipeline via dashboard API
+   - Rotation state advances automatically after successful compilation — no manual tracking needed
+5. Pipeline runs asset generation, sends Telegram checkpoint 1
+6. After asset approval, pipeline compiles video
+7. Generate title, description, chapters, tags, hashtags from title formula + description formula
+8. Pipeline sends Telegram checkpoint 2
+9. On final approval, pipeline schedules/posts to YouTube
+
+## Workflow — Narrated (Track A)
 1. Load channel `config.json` and all `frameworks/*.md` files
 2. Propose a topic or accept one from the user
 3. Hand topic + script framework to `@script-writer`
@@ -22,9 +40,10 @@ Session driver and content planner. Reads the channel's `config.json` and creati
 ## Inputs
 - Channel `config.json`
 - All files in channel `frameworks/`
-- User topic requests or preferences
+- Skill files: `.claude/agents/skills/flux-image-producer.md`, `.claude/agents/skills/runway-animation-producer.md`
+- User session inputs (topic, concepts, duration, segment count)
 
 ## Outputs
-- Content plan with topic, angle, and key points
-- Image cue list extracted from script
+- For music-only: `imagePrompts[]`, `musicPrompt`, `animationPrompts[]`
+- For narrated: content plan with topic, angle, key points, image cue list
 - Production coordination signals to other agents

@@ -26,16 +26,9 @@ const PRESETS: Record<string, VisualFilterPreset> = {
 
   synthwave: {
     name: 'synthwave',
-    description: 'Subtle vignette + glow + chromatic aberration for neon/retro aesthetic',
+    description: 'Vignette darkening edges — locked for Liminal Synth',
     filters: [
-      // Subtle vignette — darken edges gently
-      'vignette=PI/5',
-      // Glow/bloom — duplicate, blur, blend back at low opacity
-      'split[main][glow]',
-      '[glow]gblur=sigma=12[glowed]',
-      '[main][glowed]blend=all_mode=screen:all_opacity=0.15',
-      // Subtle chromatic aberration — tiny RGB channel offset
-      'rgbashift=rh=-2:bh=2:rv=1:bv=-1',
+      'vignette=PI/4',
     ],
   },
 

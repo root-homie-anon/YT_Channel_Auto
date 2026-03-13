@@ -6,6 +6,7 @@ import { loadChannelConfig } from '../../utils/config-loader.js';
 import { generateProductionId, readJsonFile, writeJsonFile } from '../../utils/file-helpers.js';
 import { ensureDir } from '../../utils/file-helpers.js';
 import { runPipeline } from '../../services/pipeline.js';
+import { loadRotationState } from '../../services/rotation-state.js';
 import { ScriptOutput } from '../../types/index.js';
 import { buildContentPlan } from '../content-planner.js';
 import { setupProduction, saveScriptOutput } from '../../production/produce.js';
@@ -29,7 +30,7 @@ const router = Router();
 router.post('/:slug/produce', async (req: Request, res: Response) => {
   try {
     const slug = req.params.slug as string;
-    const { topic, scriptOutput, durationMinutes, segmentCount, imagePrompt, musicPrompt, animationPrompt } = req.body;
+    const { topic, scriptOutput, durationMinutes, segmentCount, imagePrompts, musicPrompt, animationPrompts, lastEnvironment, lastAtmosphere } = req.body;
 
     if (!topic) {
       res.status(400).json({ error: 'topic is required' });
@@ -48,21 +49,32 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
     }
 
     const config = await loadChannelConfig(slug);
+    const isMusicOnly = config.channel.format === 'music-only';
+
+    // Music-only requires all prompt arrays from the agent
+    if (isMusicOnly) {
+      if (!imagePrompts?.length || !musicPrompt || !animationPrompts?.length) {
+        res.status(400).json({ error: 'Music-only requires imagePrompts[], musicPrompt, and animationPrompts[]' });
+        return;
+      }
+    }
+
     const productionId = generateProductionId();
     const outputDir = join(PROJECT_ROOT, 'projects', slug, 'output', productionId);
     await ensureDir(outputDir);
 
-    const plan = buildContentPlan(topic, config, { durationMinutes, segmentCount, imagePrompt, musicPrompt, animationPrompt });
+    const plan = isMusicOnly
+      ? buildContentPlan(topic, config, { durationMinutes, segmentCount, imagePrompts, musicPrompt, animationPrompts, lastEnvironment, lastAtmosphere })
+      : buildContentPlan(topic, config);
     await writeJsonFile(join(outputDir, 'content-plan.json'), plan);
 
     // Music-only channels don't need a script — auto-start with stub
-    const isMusicOnly = config.channel.format === 'music-only';
     const resolvedScript: ScriptOutput = scriptOutput ?? (isMusicOnly ? {
       title: topic,
       description: topic,
       tags: [],
       hashtags: [],
-      script: [{ sectionName: 'main', narration: '', imageCue: imagePrompt || topic }],
+      script: [{ sectionName: 'main', narration: '', imageCue: topic }],
     } : null);
 
     if (resolvedScript) {
@@ -216,6 +228,21 @@ router.get('/events', (_req: Request, res: Response) => {
   res.flushHeaders();
 
   addSseClient(res);
+});
+
+router.get('/:slug/rotation-state', async (req: Request, res: Response) => {
+  try {
+    const slug = req.params.slug as string;
+    const channelDir = join(PROJECT_ROOT, 'projects', slug);
+    if (!existsSync(join(channelDir, 'config.json'))) {
+      res.status(404).json({ error: 'Channel not found' });
+      return;
+    }
+    const state = await loadRotationState(channelDir);
+    res.json(state);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 export default router;
