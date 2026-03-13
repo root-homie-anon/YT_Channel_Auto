@@ -173,10 +173,10 @@ const CATEGORY_GROUPS = [
     categories: [
       {
         id: 'synthwave', name: 'Synthwave',
-        scene: 'Elevated monorail stretching to vanishing point — neon grid lines on city below, massive retro-futuristic skyline, low-hanging full moon',
-        subjectA: 'A cyberpunk kid sitting on the monorail gazing into the massive retro-futuristic skyline',
-        subjectB: 'Skyline buildings on both sides — windows lit in neon pink and blue, occasional slow-moving blimp with blinking lights',
-        animIntent: 'Subtle animation, loop friendly',
+        scene: 'Retro-futuristic neon cityscape at night — towering skyscrapers with glowing windows, neon grid lines on the ground, low-hanging full moon, volumetric fog between buildings',
+        subjectA: 'A cyberpunk kid sitting on a rooftop ledge gazing out at the neon skyline, back to camera, city lights reflected on wet surface',
+        subjectB: 'Skyline buildings — windows lit in neon pink and blue, holographic billboards flickering, light fog drifting between towers',
+        animIntent: 'Neon lights gently pulse and flicker, fog drifts slowly between buildings, light reflections shimmer on wet surfaces. No camera movement, no traveling motion',
         palette: 'Neon lights, deep pinks, purples and blues, deep shadows, HDR',
         avoid: 'Daylight, organic natural elements, muted colors, anything soft or rounded, warm earth tones',
         musicEnergy: 'Electronic, Drum Machine, Bass, Lush Synthesizer Pads, Synthesizer Arp, Synth Bass, Melancholic, Vibe, Cool, Modern, Atmospheric, well-arranged composition, 115 BPM', musicBPM: '115',
@@ -341,7 +341,7 @@ function buildAnimationPrompt(cat, mod, userImageConcept) {
   const motion = mod ? `Slow ambient motion in ${mod.name} environment` : cat.animIntent;
   const parts = [motion];
   if (userImageConcept) parts.push(userImageConcept);
-  parts.push('Slow, subtle, loop-friendly');
+  parts.push('Slow, subtle, loop-friendly. Static camera, no panning, no traveling. Only ambient motion: light pulses, fog drift, particle float, reflections shimmer');
   return parts.join('. ') + '.';
 }
 

@@ -12,6 +12,9 @@ const execFileAsync = promisify(execFile);
 const log = createLogger('ffmpeg-service');
 
 const CROSSFADE_DURATION = 0.8; // seconds of crossfade between images
+const SEGMENT_CROSSFADE = 1.5; // seconds of crossfade between music-only segments
+
+const ANIM_SLOWDOWN = 1.33; // Slow animation to ~75% speed for ambient feel
 
 interface CompileOptions {
   outputDir: string;
@@ -372,12 +375,12 @@ export async function compileMusicOnlyVideo(
         const image = manifest.images[i];
 
         if (hasAnim && music) {
-          // Animation looped to fill music duration
+          // Loop animation (slowed) over music track
           const ffmpegArgs = [
             '-stream_loop', '-1', '-i', hasAnim.path,
             '-i', music.path,
             '-filter_complex',
-            `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+            `[0:v]setpts=${ANIM_SLOWDOWN}*PTS,scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
             `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[vout]`,
             '-map', '[vout]', '-map', '1:a',
             '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
@@ -407,19 +410,57 @@ export async function compileMusicOnlyVideo(
         log.info(`Segment ${i} compiled: ${segPath}`);
       }
 
-      // Concatenate all segments with crossfade
+      // Concatenate all segments with audio + video crossfade
       if (segmentPaths.length === 1) {
         const { copyFile } = await import('fs/promises');
         await copyFile(segmentPaths[0], videoPath);
       } else {
-        // Write concat list file
-        const concatList = segmentPaths.map((p) => `file '${p}'`).join('\n');
-        const concatPath = join(outputDir, 'concat-list.txt');
-        const { writeFile } = await import('fs/promises');
-        await writeFile(concatPath, concatList);
+        // Probe each segment duration for crossfade offset calculation
+        const segDurations: number[] = [];
+        for (const sp of segmentPaths) {
+          const d = await getVideoDuration(sp);
+          segDurations.push(d > 0 ? d : 60);
+        }
+
+        const inputArgs: string[] = [];
+        for (const sp of segmentPaths) {
+          inputArgs.push('-i', sp);
+        }
+
+        const filterParts: string[] = [];
+        const n = segmentPaths.length;
+
+        // Video crossfade chain
+        let prevVideoLabel = '0:v';
+        for (let i = 1; i < n; i++) {
+          const outLabel = i === n - 1 ? 'vout' : `vxf${i}`;
+          // Offset = cumulative duration of all segments up to i, minus accumulated crossfade overlap
+          const cumulativeDuration = segDurations
+            .slice(0, i)
+            .reduce((sum, d) => sum + d, 0);
+          const cumulativeCrossfade = (i - 1) * SEGMENT_CROSSFADE;
+          const offset = Math.max(0, cumulativeDuration - cumulativeCrossfade - SEGMENT_CROSSFADE);
+
+          filterParts.push(
+            `[${prevVideoLabel}][${i}:v]xfade=transition=fade:duration=${SEGMENT_CROSSFADE}:offset=${offset.toFixed(3)}[${outLabel}]`
+          );
+          prevVideoLabel = outLabel;
+        }
+
+        // Audio crossfade chain
+        let prevAudioLabel = '0:a';
+        for (let i = 1; i < n; i++) {
+          const outLabel = i === n - 1 ? 'aout' : `axf${i}`;
+          filterParts.push(
+            `[${prevAudioLabel}][${i}:a]acrossfade=d=${SEGMENT_CROSSFADE}:c1=tri:c2=tri[${outLabel}]`
+          );
+          prevAudioLabel = outLabel;
+        }
 
         const ffmpegArgs = [
-          '-f', 'concat', '-safe', '0', '-i', concatPath,
+          ...inputArgs,
+          '-filter_complex', filterParts.join(';'),
+          '-map', '[vout]', '-map', '[aout]',
           '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
           '-c:a', 'aac', '-b:a', '192k',
           '-movflags', '+faststart',
@@ -438,7 +479,7 @@ export async function compileMusicOnlyVideo(
         for (let i = 0; i < manifest.animations.length; i++) {
           inputArgs.push('-i', manifest.animations[i].path);
           filterParts.push(
-            `[${i}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+            `[${i}:v]setpts=${ANIM_SLOWDOWN}*PTS,scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
             `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1[v${i}]`
           );
         }

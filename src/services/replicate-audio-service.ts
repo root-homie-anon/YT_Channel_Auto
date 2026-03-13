@@ -50,9 +50,9 @@ export async function generateMusic(options: MusicGenerateOptions): Promise<Asse
     // Step 1: Create prediction
     const input: Record<string, unknown> = {
       prompt,
-      seconds_total: clampedDuration,
-      guidance_scale: guidanceScale,
-      num_inference_steps: numInferenceSteps,
+      duration: clampedDuration,
+      cfg_scale: guidanceScale,
+      steps: numInferenceSteps,
     };
     if (seed !== undefined) {
       input.seed = seed;
@@ -99,14 +99,16 @@ export async function generateMusic(options: MusicGenerateOptions): Promise<Asse
     const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
     await writeFile(outputPath, audioBuffer);
 
-    log.info(`Music saved: ${outputPath} (${clampedDuration}s)`);
+    // Extract seed from prediction logs or input for reproducibility
+    const usedSeed = result.input?.seed ?? seed ?? 'random';
+    log.info(`Music saved: ${outputPath} (${clampedDuration}s, seed: ${usedSeed}, prediction: ${result.id})`);
 
     return {
       id: randomUUID(),
       path: outputPath,
       type: 'music',
       durationSeconds: clampedDuration,
-      metadata: { prompt, model: MODEL_VERSION },
+      metadata: { prompt, model: MODEL_VERSION, seed: String(usedSeed), predictionId: result.id },
     };
   } catch (error) {
     if (error instanceof ApiError) throw error;
@@ -125,6 +127,9 @@ interface ReplicatePrediction {
   status: 'starting' | 'processing' | 'succeeded' | 'failed' | 'canceled';
   output?: string;
   error?: string;
+  logs?: string;
+  metrics?: { predict_time?: number };
+  input?: Record<string, unknown>;
 }
 
 async function pollForCompletion(

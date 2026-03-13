@@ -1,7 +1,7 @@
 # Runway ML Animation Framework — Music-Only Channels
 
 > This file defines how `@asset-producer` generates animated video clips from static images
-> using Runway ML's Gen-3 Alpha Turbo image-to-video API.
+> using Runway ML's Gen-4 Turbo image-to-video API.
 > **Music-only channels only** — long/short narrated formats use Ken Burns (FFmpeg zoompan) instead.
 > Each generated image is animated into a short looping clip. These clips are concatenated
 > and looped to fill the full music duration during compilation.
@@ -33,8 +33,9 @@ Static images are not sufficient. The animation must:
 
 ## Runway ML Settings
 
-**Model:** `gen3a_turbo`
-**Duration:** 4 seconds per clip (Runway minimum for loopable output)
+**Model:** `gen4_turbo`
+**Duration:** 4 seconds per clip (valid range: 2–10 seconds)
+**Ratio:** `1280:720` (16:9 landscape)
 **Input:** Base64 data URI of the generated Flux image
 **Output:** MP4 clip downloaded and saved locally
 

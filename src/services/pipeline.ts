@@ -1,5 +1,7 @@
-import { readFile } from 'fs/promises';
+import { execFile } from 'child_process';
+import { access, readFile } from 'fs/promises';
 import { join } from 'path';
+import { promisify } from 'util';
 
 import { PipelineError } from '../errors/index.js';
 import {
@@ -34,10 +36,15 @@ import {
   compileMusicOnlyVideo,
 } from './ffmpeg-service.js';
 import { generateThumbnailNB2 } from './nanobana-service.js';
-import { uploadVideo, updateVideoPrivacy } from './youtube-service.js';
-import { sendApprovalRequest, pollForApproval } from './telegram-service.js';
+import { uploadVideo } from './youtube-service.js';
+import { sendApprovalRequest, pollForApproval, sendVideo, sendPhoto } from './telegram-service.js';
 
+const execFileAsync = promisify(execFile);
 const log = createLogger('pipeline');
+
+async function runFfmpegDirect(args: string[]): Promise<void> {
+  await execFileAsync('ffmpeg', args, { maxBuffer: 50 * 1024 * 1024 });
+}
 
 export async function runPipeline(
   channelSlug: string,
@@ -227,12 +234,12 @@ async function generateAssets(
           const imageData = await readFile(imageAsset.path);
           const base64 = imageData.toString('base64');
           const dataUri = `data:image/png;base64,${base64}`;
-          const animPrompt = prompts?.animationPrompt ?? 'Subtle slow cinematic motion, loop-friendly';
+          const animPrompt = prompts?.animationPrompt ?? 'Slow ambient motion, light pulses, fog drift, reflections shimmer. Static camera, no panning, no traveling motion. Loop-friendly';
 
           const animAsset = await generateAnimation({
             imageUrl: dataUri,
             prompt: animPrompt,
-            durationSeconds: 4,
+            durationSeconds: 10,
             outputPath: join(outputDir, 'animations', `anim-${pad}.mp4`),
           });
           manifest.animations.push(animAsset);
@@ -395,75 +402,60 @@ async function compileVideo(
     }
   }
 
-  // Generate thumbnail via NB2 (Nano Banana 2 / Gemini image gen)
-  const thumbnailPath = join(outputDir, 'thumbnail.png');
-  try {
-    const thumbnailPrompt = buildThumbnailPrompt(config, channelDir, scriptOutput);
-    const nb2Result = await generateThumbnailNB2({
-      prompt: thumbnailPrompt,
-      aspectRatio: '16:9',
-      outputPath: thumbnailPath,
-      resolution: '4K',
-    });
-    result.thumbnailPath = nb2Result.filePath;
-    log.info(`NB2 thumbnail generated: ${nb2Result.filePath}`);
-  } catch (err) {
-    log.warn(`NB2 thumbnail failed: ${(err as Error).message}. Thumbnail will be empty.`);
-    result.thumbnailPath = '';
+  // Generate thumbnail via NB2 — skip for music-only channels
+  if (format !== 'music-only') {
+    const thumbnailPath = join(outputDir, 'thumbnail.png');
+    try {
+      const thumbnailFramework = await loadFramework(channelDir, config.frameworks.thumbnail);
+      const thumbnailPrompt = buildThumbnailPrompt(config, thumbnailFramework, scriptOutput);
+      const nb2Result = await generateThumbnailNB2({
+        prompt: thumbnailPrompt,
+        aspectRatio: '16:9',
+        outputPath: thumbnailPath,
+        resolution: '4K',
+      });
+      result.thumbnailPath = nb2Result.filePath;
+      log.info(`NB2 thumbnail generated: ${nb2Result.filePath}`);
+    } catch (err) {
+      log.warn(`NB2 thumbnail failed: ${(err as Error).message}. Thumbnail will be empty.`);
+      result.thumbnailPath = '';
+    }
   }
 
   return result;
 }
 
 /**
- * Build a cinematic NB2 prompt inspired by high-performing YouTube thumbnails.
- *
- * Style reference: massive integrated text dominating 40-50% of the image,
- * epic cinematic scenes with depth (foreground silhouette → midground structures
- * → background atmosphere), volumetric lighting, dramatic scale contrast,
- * and atmospheric color grading (deep blues, purples, ambers).
+ * Build a thumbnail prompt using the channel's thumbnail framework.
+ * The framework contains all channel-specific style, palette, composition, and text rules.
  */
 function buildThumbnailPrompt(
   _config: ChannelConfig,
-  _channelDir: string,
+  thumbnailFramework: string,
   scriptOutput: ScriptOutput
 ): string {
   const td = scriptOutput.productionBrief?.thumbnailDirection;
   const textOverlay = td?.textOverlay ?? scriptOutput.title.split(' ').slice(0, 3).join(' ').toUpperCase();
-
-  // Scene description from production brief or generic epic scene
   const scene = td
     ? `${td.primaryConcept}. ${td.compositionNote}`
-    : `Dark cinematic scene related to "${scriptOutput.title}"`;
-
+    : `Cinematic scene related to "${scriptOutput.title}"`;
   const mood = td?.emotionalHook ?? 'awe and mystery';
 
   return [
-    // Scene — paint a vivid, epic, layered composition
-    `Epic cinematic scene: ${scene}.`,
-    `The scene has dramatic depth with three layers: a dark silhouetted foreground element, detailed midground subject matter, and atmospheric background fading into moody sky.`,
-    `Volumetric fog and atmospheric haze between layers creates cinematic depth.`,
-    `Scale contrast: the scene feels massive and overwhelming, dwarfing any human-scale elements.`,
+    `Generate a YouTube thumbnail image.`,
     '',
-    // Text — the defining feature, MASSIVE and integrated
-    `CRITICAL TEXT REQUIREMENT: The words "${textOverlay}" must be rendered as ENORMOUS bold text across the lower-left portion of the image.`,
-    `The text must be the single most dominant visual element, covering approximately 40-50% of the image width.`,
-    `Text style: ultra-bold, wide tracking, pure bright white with subtle shadow for depth. The letters should feel monumental and powerful.`,
-    `The text must be integrated into the scene composition — it should feel like it belongs in the image, not pasted on top.`,
+    `## Channel Style Guide (from framework)`,
+    thumbnailFramework,
     '',
-    // Style and color
-    `Color palette: deep navy blues (#0a1628), rich purples, and near-black shadows. Accent lighting in amber, electric blue, or cold white on focal elements.`,
-    `Style: dark cinematic photorealism with film grain, dramatic atmospheric lighting, high production value.`,
-    `Mood: ${mood}.`,
-    `Lighting: dramatic volumetric rays, rim lighting on key elements, strong contrast between lit and shadow areas.`,
+    `## This Video`,
+    `Title: ${scriptOutput.title}`,
+    `Scene: ${scene}`,
+    `Mood: ${mood}`,
+    `Text overlay: "${textOverlay}"`,
     '',
-    // Technical
-    `Image must have extremely high contrast — bright elements pop against deep dark backgrounds.`,
-    `Must be clearly readable and impactful at small thumbnail size (320px width).`,
+    `## Requirements`,
     `16:9 aspect ratio, 4K resolution.`,
-    '',
-    // Avoid
-    `Avoid: cartoonish or campy elements, bright cheerful colors, busy cluttered compositions, soft low-contrast look, visible human faces, watermarks, cheap stock photo aesthetic. The image should look like a frame from a high-budget documentary or cinematic trailer.`,
+    `Must be clearly readable and impactful at small thumbnail size (320px width).`,
   ].join('\n');
 }
 
@@ -474,36 +466,90 @@ async function publishWithApproval(
 ): Promise<PublishResult> {
   const oauthPath = join(getChannelDir(config.channel.slug), '.youtube-oauth.json');
 
-  // Upload as unlisted first
-  const publishResult = await uploadVideo(oauthPath, {
-    videoPath: compilation.videoPath,
-    thumbnailPath: compilation.thumbnailPath,
-    title: scriptOutput.title,
-    description: scriptOutput.description,
-    tags: scriptOutput.tags,
-    hashtags: scriptOutput.hashtags,
-    privacy: 'unlisted',
-  });
+  // Check if YouTube OAuth is available
+  let hasYouTubeOAuth = false;
+  try {
+    await access(oauthPath);
+    hasYouTubeOAuth = true;
+  } catch {
+    log.warn('No YouTube OAuth file — will send to Telegram for review only');
+  }
 
-  // Send Telegram approval
+  // Send preview clip + thumbnail to Telegram for review
+  const previewPath = join(compilation.videoPath, '..', 'preview-clip.mp4');
+  const PREVIEW_SECONDS = 20;
+  try {
+    await runFfmpegDirect([
+      '-i', compilation.videoPath,
+      '-t', String(PREVIEW_SECONDS),
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '28',
+      '-c:a', 'aac', '-b:a', '128k',
+      '-movflags', '+faststart',
+      '-y', previewPath,
+    ]);
+    log.info(`Preview clip created: ${PREVIEW_SECONDS}s`);
+  } catch {
+    log.warn('Preview clip failed, skipping video in Telegram');
+  }
+
+  const caption = [
+    `🎬 ${scriptOutput.title}`,
+    `📺 ${config.channel.name}`,
+    `⏱ ${compilation.durationSeconds}s total (${PREVIEW_SECONDS}s preview)`,
+    '',
+    'Reply "approve" to publish or "reject" to discard.',
+  ].join('\n');
+
+  const { stat: statFile } = await import('fs/promises');
+  try {
+    await statFile(previewPath);
+    await sendVideo(previewPath, caption);
+  } catch {
+    log.warn('No preview clip to send');
+  }
+  if (compilation.thumbnailPath) {
+    await sendPhoto(compilation.thumbnailPath, `Thumbnail: ${scriptOutput.title}`);
+  }
+
   const messageId = await sendApprovalRequest({
     videoTitle: scriptOutput.title,
-    youtubeUrl: publishResult.youtubeUrl,
+    youtubeUrl: '',
     channelName: config.channel.name,
   });
 
-  publishResult.status = 'pending_approval';
+  const publishResult: PublishResult = {
+    youtubeVideoId: '',
+    youtubeUrl: '',
+    status: 'pending_approval',
+  };
 
   // Wait for approval
   const approved = await pollForApproval(messageId);
 
-  if (approved) {
-    await updateVideoPrivacy(oauthPath, publishResult.youtubeVideoId, 'public');
-    publishResult.status = 'published';
-    log.info(`Video published: ${publishResult.youtubeUrl}`);
-  } else {
+  if (!approved) {
     publishResult.status = 'rejected';
-    log.warn(`Video rejected: ${publishResult.youtubeUrl}`);
+    log.warn(`Video rejected: ${scriptOutput.title}`);
+    return publishResult;
+  }
+
+  // Upload to YouTube if OAuth is available
+  if (hasYouTubeOAuth) {
+    const ytResult = await uploadVideo(oauthPath, {
+      videoPath: compilation.videoPath,
+      thumbnailPath: compilation.thumbnailPath,
+      title: scriptOutput.title,
+      description: scriptOutput.description,
+      tags: scriptOutput.tags,
+      hashtags: scriptOutput.hashtags,
+      privacy: 'public',
+    });
+    publishResult.youtubeVideoId = ytResult.youtubeVideoId;
+    publishResult.youtubeUrl = ytResult.youtubeUrl;
+    publishResult.status = 'published';
+    log.info(`Video published: ${ytResult.youtubeUrl}`);
+  } else {
+    publishResult.status = 'approved';
+    log.info(`Video approved (no YouTube upload — OAuth not configured)`);
   }
 
   return publishResult;

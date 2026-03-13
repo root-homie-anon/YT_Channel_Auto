@@ -72,7 +72,7 @@ function validateConfig(config: ChannelConfig, configPath: string): void {
   if (!config.credentials?.elevenLabsVoiceId && config.channel.format !== 'music-only') {
     throw new ConfigError('Missing credentials.elevenLabsVoiceId (required for non-music-only)', configPath);
   }
-  if (!config.frameworks?.script) {
+  if (!config.frameworks?.script && config.channel.format !== 'music-only') {
     throw new ConfigError('Missing frameworks.script path', configPath);
   }
 }

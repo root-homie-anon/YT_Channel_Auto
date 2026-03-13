@@ -20,7 +20,7 @@ interface AnimationOptions {
 export async function generateAnimation(options: AnimationOptions): Promise<AssetFile> {
   const apiKey = requireEnv('RUNWAY_API_KEY');
 
-  const { imageUrl, prompt, durationSeconds = 4, outputPath } = options;
+  const { imageUrl, prompt, durationSeconds = 10, outputPath } = options;
 
   log.info(`Generating animation: "${prompt.slice(0, 80)}..."`);
   await ensureDir(join(outputPath, '..'));
@@ -35,16 +35,18 @@ export async function generateAnimation(options: AnimationOptions): Promise<Asse
         'X-Runway-Version': '2024-11-06',
       },
       body: JSON.stringify({
+        model: 'gen4_turbo',
         promptImage: imageUrl,
         promptText: prompt,
         duration: durationSeconds,
-        model: 'gen3a_turbo',
+        ratio: '1280:720',
       }),
     });
 
     if (!startResponse.ok) {
+      const errorBody = await startResponse.text();
       throw new ApiError(
-        `Runway API returned ${startResponse.status}: ${startResponse.statusText}`,
+        `Runway API returned ${startResponse.status}: ${errorBody}`,
         'runway',
         startResponse.status
       );
