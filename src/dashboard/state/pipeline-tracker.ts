@@ -97,7 +97,7 @@ export function startPipelineWatcher(channelSlug: string, productionId: string):
         });
       }
 
-      if (status.stage === 'complete' || status.stage === 'failed') {
+      if (status.stage === 'complete' || status.stage === 'failed' || status.stage === 'rejected') {
         clearInterval(interval);
         removePipeline(channelSlug);
       }

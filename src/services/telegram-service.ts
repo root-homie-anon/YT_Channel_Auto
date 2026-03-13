@@ -222,6 +222,93 @@ async function sendFile(
   return result.result.message_id;
 }
 
+/**
+ * Background listener that polls Telegram for /approve and /reject replies.
+ * Matches replies against pending checkpoints and triggers approval/rejection.
+ * No timeout — runs as long as the process is alive.
+ */
+export function startTelegramApprovalListener(
+  onApprove: (messageId: number) => Promise<void>,
+  onReject: (messageId: number, reason?: string) => Promise<void>,
+  getTrackedMessageIds: () => number[]
+): void {
+  let botToken: string;
+  let chatId: string;
+  try {
+    botToken = requireEnv('TELEGRAM_BOT_TOKEN');
+    chatId = requireEnv('TELEGRAM_CHAT_ID');
+  } catch {
+    log.warn('Telegram not configured — approval listener disabled');
+    return;
+  }
+
+  let lastUpdateId = 0;
+  log.info('Telegram approval listener started (no timeout)');
+
+  const poll = async (): Promise<void> => {
+    try {
+      const response = await fetch(
+        `${TELEGRAM_API_BASE}${botToken}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`,
+        { method: 'GET' }
+      );
+
+      if (!response.ok) return;
+
+      const data = (await response.json()) as {
+        result: Array<{
+          update_id: number;
+          message?: {
+            chat: { id: number };
+            text?: string;
+            reply_to_message?: { message_id: number };
+          };
+        }>;
+      };
+
+      const trackedIds = getTrackedMessageIds();
+
+      for (const update of data.result) {
+        lastUpdateId = update.update_id;
+        const msg = update.message;
+
+        if (
+          msg &&
+          String(msg.chat.id) === chatId &&
+          msg.reply_to_message?.message_id &&
+          trackedIds.includes(msg.reply_to_message.message_id)
+        ) {
+          const text = msg.text?.toLowerCase().trim();
+          const replyToId = msg.reply_to_message.message_id;
+
+          if (text === '/approve') {
+            log.info(`Telegram approval received for message ${replyToId}`);
+            await onApprove(replyToId).catch((err) =>
+              log.warn(`Approval handler failed: ${(err as Error).message}`)
+            );
+          } else if (text?.startsWith('/reject')) {
+            const reason = msg.text?.slice('/reject'.length).trim() || undefined;
+            log.info(`Telegram rejection received for message ${replyToId}`);
+            await onReject(replyToId, reason).catch((err) =>
+              log.warn(`Rejection handler failed: ${(err as Error).message}`)
+            );
+          }
+        }
+      }
+    } catch (error) {
+      log.warn(`Telegram listener poll error: ${(error as Error).message}`);
+    }
+  };
+
+  const loop = async (): Promise<void> => {
+    while (true) {
+      await poll();
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
+  };
+
+  loop().catch((err) => log.warn(`Telegram listener stopped: ${(err as Error).message}`));
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')

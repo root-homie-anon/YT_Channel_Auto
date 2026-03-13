@@ -5,8 +5,9 @@ import { fileURLToPath } from 'url';
 import { loadChannelConfig } from '../../utils/config-loader.js';
 import { generateProductionId, readJsonFile, writeJsonFile } from '../../utils/file-helpers.js';
 import { ensureDir } from '../../utils/file-helpers.js';
-import { runPipeline } from '../../services/pipeline.js';
+import { runPipeline, resumePipeline } from '../../services/pipeline.js';
 import { loadRotationState } from '../../services/rotation-state.js';
+import { approveProduction, rejectProduction, listPendingApprovals } from '../../services/approval-service.js';
 import { ScriptOutput } from '../../types/index.js';
 import { buildContentPlan } from '../content-planner.js';
 import { setupProduction, saveScriptOutput } from '../../production/produce.js';
@@ -84,10 +85,13 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
       startPipelineWatcher(slug, productionId);
 
       runPipeline(slug, plan, resolvedScript, productionId)
+        .then((ctx) => {
+          // Only remove pipeline if it completed (not paused at checkpoint)
+          const stage = ctx.publishResult ? 'complete' : 'checkpoint';
+          if (stage === 'complete') removePipeline(slug);
+        })
         .catch((err) => {
           console.error(`Pipeline failed for ${slug}:`, (err as Error).message);
-        })
-        .finally(() => {
           removePipeline(slug);
         });
 
@@ -156,10 +160,11 @@ router.post('/:slug/run/:productionId', async (req: Request, res: Response) => {
     startPipelineWatcher(slug, productionId);
 
     runPipeline(slug, plan, scriptOutput, productionId)
+      .then((ctx) => {
+        if (ctx.publishResult) removePipeline(slug);
+      })
       .catch((err) => {
         console.error(`Pipeline failed for ${slug}:`, (err as Error).message);
-      })
-      .finally(() => {
         removePipeline(slug);
       });
 
@@ -240,6 +245,58 @@ router.get('/:slug/rotation-state', async (req: Request, res: Response) => {
     }
     const state = await loadRotationState(channelDir);
     res.json(state);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// === Approval Endpoints ===
+
+router.post('/:slug/approve/:productionId', async (req: Request, res: Response) => {
+  try {
+    const slug = req.params.slug as string;
+    const productionId = req.params.productionId as string;
+
+    await approveProduction(slug, productionId);
+
+    // Resume pipeline in background
+    registerPipeline(slug, productionId, 'Resuming after approval');
+    startPipelineWatcher(slug, productionId);
+
+    resumePipeline(slug, productionId)
+      .then((ctx) => {
+        if (ctx.publishResult) removePipeline(slug);
+      })
+      .catch((err) => {
+        console.error(`Pipeline resume failed for ${slug}:`, (err as Error).message);
+        removePipeline(slug);
+      });
+
+    res.json({ status: 'approved', productionId, message: 'Pipeline resuming' });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/:slug/reject/:productionId', async (req: Request, res: Response) => {
+  try {
+    const slug = req.params.slug as string;
+    const productionId = req.params.productionId as string;
+    const { reason } = req.body ?? {};
+
+    await rejectProduction(slug, productionId, reason);
+    removePipeline(slug);
+
+    res.json({ status: 'rejected', productionId });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+router.get('/approvals/pending', async (_req: Request, res: Response) => {
+  try {
+    const pending = await listPendingApprovals();
+    res.json(pending);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

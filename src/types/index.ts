@@ -169,16 +169,28 @@ export type PipelineStage =
   | 'scripting'
   | 'asset_generation'
   | 'asset_preview'
+  | 'awaiting_asset_approval'
   | 'compilation'
   | 'metadata_generation'
   | 'approval'
+  | 'awaiting_final_approval'
   | 'publishing'
   | 'complete'
+  | 'rejected'
   | 'failed';
+
+export interface CheckpointData {
+  type: 'asset_preview' | 'final_approval';
+  channelSlug: string;
+  productionId: string;
+  telegramMessageId: number;
+  requestedAt: string;
+}
 
 export interface PipelineStatus {
   stage: PipelineStage;
   startedAt: Date;
   updatedAt: Date;
   error?: string;
+  checkpoint?: CheckpointData;
 }

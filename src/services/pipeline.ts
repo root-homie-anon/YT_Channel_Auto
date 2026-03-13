@@ -1,5 +1,5 @@
 import { execFile } from 'child_process';
-import { access, readFile } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { promisify } from 'util';
 
@@ -7,6 +7,7 @@ import { PipelineError } from '../errors/index.js';
 import {
   AssetManifest,
   ChannelConfig,
+  CheckpointData,
   CompilationResult,
   ContentPlan,
   PipelineContext,
@@ -21,7 +22,7 @@ import {
   loadChannelConfig,
   loadFramework,
 } from '../utils/config-loader.js';
-import { generateProductionId, writeJsonFile } from '../utils/file-helpers.js';
+import { generateProductionId, readJsonFile, writeJsonFile } from '../utils/file-helpers.js';
 import { createLogger } from '../utils/logger.js';
 
 import { generateBatchImages, generateImage } from './flux-service.js';
@@ -38,7 +39,7 @@ import {
 import { generateThumbnailNB2 } from './nanobana-service.js';
 import { advanceRotationState } from './rotation-state.js';
 import { uploadVideo } from './youtube-service.js';
-import { sendApprovalRequest, pollForApproval, sendVideo, sendPhoto, sendAudio } from './telegram-service.js';
+import { sendApprovalRequest, sendVideo, sendPhoto, sendAudio } from './telegram-service.js';
 
 const execFileAsync = promisify(execFile);
 const log = createLogger('pipeline');
@@ -47,6 +48,12 @@ async function runFfmpegDirect(args: string[]): Promise<void> {
   await execFileAsync('ffmpeg', args, { maxBuffer: 50 * 1024 * 1024 });
 }
 
+/**
+ * Run the pipeline from the beginning. Generates assets, sends Telegram preview,
+ * then pauses at a checkpoint (awaiting_asset_approval or awaiting_final_approval).
+ * Returns 'checkpoint' if paused, 'complete' if fully done (narrated channels
+ * without music-only checkpoint skip straight through).
+ */
 export async function runPipeline(
   channelSlug: string,
   contentPlan: ContentPlan,
@@ -85,57 +92,30 @@ export async function runPipeline(
     context.assetManifest = assetResult.manifest;
     await writeJsonFile(join(outputDir, 'asset-manifest.json'), context.assetManifest);
 
-    // Stage: Asset Preview (Telegram Checkpoint 1 — approve assets before compilation)
+    // Stage: Asset Preview (Telegram Checkpoint 1 — non-blocking)
     if (config.channel.format === 'music-only' && context.assetManifest) {
       await updateStage(status, 'asset_preview', outputDir);
       log.info('Sending asset previews to Telegram for approval');
-      const assetApproved = await sendAssetPreview(config, context.assetManifest, contentPlan);
-      if (!assetApproved) {
-        throw new PipelineError('Assets rejected during preview', 'asset_preview');
-      }
-      log.info('Assets approved — proceeding to compilation');
+      const messageId = await sendAssetPreviewMessages(config, context.assetManifest, contentPlan);
+
+      // Write checkpoint and pause — pipeline resumes on approval
+      const checkpoint: CheckpointData = {
+        type: 'asset_preview',
+        channelSlug,
+        productionId,
+        telegramMessageId: messageId,
+        requestedAt: new Date().toISOString(),
+      };
+      status.stage = 'awaiting_asset_approval';
+      status.checkpoint = checkpoint;
+      status.updatedAt = new Date();
+      await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
+      log.info('Pipeline paused — awaiting asset approval (no timeout)');
+      return context;
     }
 
-    // Stage: Compilation
-    await updateStage(status, 'compilation', outputDir);
-    log.info('Starting video compilation');
-    context.compilationResult = await compileVideo(
-      config, channelDir, outputDir, context.assetManifest, scriptOutput, assetResult.teaserManifest
-    );
-    await writeJsonFile(join(outputDir, 'compilation-result.json'), context.compilationResult);
-
-    // Advance rotation state after successful compilation (music-only)
-    if (config.channel.format === 'music-only' && contentPlan.musicOnlyPrompts) {
-      const segmentsConsumed = contentPlan.segmentCount ?? 1;
-      await advanceRotationState(
-        channelDir,
-        segmentsConsumed,
-        contentPlan.musicOnlyPrompts.lastEnvironment ?? '',
-        contentPlan.musicOnlyPrompts.lastAtmosphere ?? '',
-        productionId
-      );
-    }
-
-    // Stage: Metadata Generation (music-only channels generate title/desc/tags from frameworks)
-    if (config.channel.format === 'music-only') {
-      await updateStage(status, 'metadata_generation', outputDir);
-      log.info('Generating metadata from frameworks');
-      await generateMusicOnlyMetadata(config, channelDir, contentPlan, scriptOutput, context.compilationResult);
-      await writeJsonFile(join(outputDir, 'script-output.json'), scriptOutput);
-      log.info(`Metadata generated — title: "${scriptOutput.title}"`);
-    }
-
-    // Stage: Approval
-    await updateStage(status, 'approval', outputDir);
-    log.info('Starting approval flow');
-    context.publishResult = await publishWithApproval(config, context.compilationResult, scriptOutput);
-    await writeJsonFile(join(outputDir, 'publish-result.json'), context.publishResult);
-
-    // Stage: Complete
-    await updateStage(status, 'complete', outputDir);
-    log.info(`Pipeline complete for "${scriptOutput.title}"`);
-
-    return context;
+    // Non-music-only channels: continue straight to compilation
+    return await runFromCompilation(channelSlug, productionId, config, channelDir, outputDir, contentPlan, scriptOutput, context, status, assetResult.teaserManifest);
   } catch (error) {
     status.stage = 'failed';
     status.error = (error as Error).message;
@@ -148,6 +128,183 @@ export async function runPipeline(
       error as Error
     );
   }
+}
+
+/**
+ * Resume the pipeline after an approval. Reads all state from disk.
+ * Dispatches to the correct stage based on pipeline-status.json.
+ */
+export async function resumePipeline(
+  channelSlug: string,
+  productionId: string
+): Promise<PipelineContext> {
+  const config = await loadChannelConfig(channelSlug);
+  const channelDir = getChannelDir(channelSlug);
+  const outputDir = getOutputDir(channelSlug, productionId);
+
+  const status = await readJsonFile<PipelineStatus>(join(outputDir, 'pipeline-status.json'));
+  const contentPlan = await readJsonFile<ContentPlan>(join(outputDir, 'content-plan.json'));
+  const scriptOutput = await readJsonFile<ScriptOutput>(join(outputDir, 'script-output.json'));
+
+  const context: PipelineContext = {
+    channelConfig: config,
+    channelDir,
+    outputDir,
+    contentPlan,
+    scriptOutput,
+  };
+
+  try {
+    if (status.stage === 'compilation') {
+      // Resuming after asset approval — run compilation through to final checkpoint
+      const manifest = await readJsonFile<AssetManifest>(join(outputDir, 'asset-manifest.json'));
+      context.assetManifest = manifest;
+      return await runFromCompilation(channelSlug, productionId, config, channelDir, outputDir, contentPlan, scriptOutput, context, status);
+    }
+
+    if (status.stage === 'publishing') {
+      // Resuming after final approval — upload to YouTube
+      const compilation = await readJsonFile<CompilationResult>(join(outputDir, 'compilation-result.json'));
+      context.compilationResult = compilation;
+      return await runFromPublishing(config, outputDir, compilation, scriptOutput, context, status);
+    }
+
+    throw new PipelineError(`Cannot resume pipeline at stage "${status.stage}"`, status.stage);
+  } catch (error) {
+    status.stage = 'failed';
+    status.error = (error as Error).message;
+    status.updatedAt = new Date();
+    await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
+
+    throw new PipelineError(
+      `Pipeline failed at stage ${status.stage}: ${(error as Error).message}`,
+      status.stage,
+      error as Error
+    );
+  }
+}
+
+/**
+ * Run from compilation stage through to final approval checkpoint or completion.
+ */
+async function runFromCompilation(
+  channelSlug: string,
+  productionId: string,
+  config: ChannelConfig,
+  channelDir: string,
+  outputDir: string,
+  contentPlan: ContentPlan,
+  scriptOutput: ScriptOutput,
+  context: PipelineContext,
+  status: PipelineStatus,
+  teaserManifest?: AssetManifest
+): Promise<PipelineContext> {
+  const manifest = context.assetManifest ?? await readJsonFile<AssetManifest>(join(outputDir, 'asset-manifest.json'));
+  context.assetManifest = manifest;
+
+  // Stage: Compilation
+  await updateStage(status, 'compilation', outputDir);
+  log.info('Starting video compilation');
+  context.compilationResult = await compileVideo(
+    config, channelDir, outputDir, manifest, scriptOutput, teaserManifest
+  );
+  await writeJsonFile(join(outputDir, 'compilation-result.json'), context.compilationResult);
+
+  // Advance rotation state after successful compilation (music-only)
+  if (config.channel.format === 'music-only' && contentPlan.musicOnlyPrompts) {
+    const segmentsConsumed = contentPlan.segmentCount ?? 1;
+    await advanceRotationState(
+      channelDir,
+      segmentsConsumed,
+      contentPlan.musicOnlyPrompts.lastEnvironment ?? '',
+      contentPlan.musicOnlyPrompts.lastAtmosphere ?? '',
+      productionId
+    );
+  }
+
+  // Stage: Metadata Generation (music-only channels generate title/desc/tags from frameworks)
+  if (config.channel.format === 'music-only') {
+    await updateStage(status, 'metadata_generation', outputDir);
+    log.info('Generating metadata from frameworks');
+    await generateMusicOnlyMetadata(config, channelDir, contentPlan, scriptOutput, context.compilationResult);
+    await writeJsonFile(join(outputDir, 'script-output.json'), scriptOutput);
+    log.info(`Metadata generated — title: "${scriptOutput.title}"`);
+  }
+
+  // Stage: Send final approval (Telegram Checkpoint 2 — non-blocking)
+  await updateStage(status, 'approval', outputDir);
+  log.info('Sending final video for approval');
+  const messageId = await sendFinalApprovalMessages(config, context.compilationResult, scriptOutput);
+
+  const checkpoint: CheckpointData = {
+    type: 'final_approval',
+    channelSlug,
+    productionId,
+    telegramMessageId: messageId,
+    requestedAt: new Date().toISOString(),
+  };
+  status.stage = 'awaiting_final_approval';
+  status.checkpoint = checkpoint;
+  status.updatedAt = new Date();
+  await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
+  log.info('Pipeline paused — awaiting final approval (no timeout)');
+
+  return context;
+}
+
+/**
+ * Run from publishing stage — upload to YouTube and mark complete.
+ */
+async function runFromPublishing(
+  config: ChannelConfig,
+  outputDir: string,
+  compilation: CompilationResult,
+  scriptOutput: ScriptOutput,
+  context: PipelineContext,
+  status: PipelineStatus
+): Promise<PipelineContext> {
+  await updateStage(status, 'publishing', outputDir);
+  log.info('Publishing to YouTube');
+
+  const oauthPath = join(getChannelDir(config.channel.slug), '.youtube-oauth.json');
+  let hasYouTubeOAuth = false;
+  try {
+    const { access: fsAccess } = await import('fs/promises');
+    await fsAccess(oauthPath);
+    hasYouTubeOAuth = true;
+  } catch {
+    log.warn('No YouTube OAuth file — skipping upload');
+  }
+
+  const publishResult: PublishResult = {
+    youtubeVideoId: '',
+    youtubeUrl: '',
+    status: 'approved',
+  };
+
+  if (hasYouTubeOAuth) {
+    const ytResult = await uploadVideo(oauthPath, {
+      videoPath: compilation.videoPath,
+      thumbnailPath: compilation.thumbnailPath,
+      title: scriptOutput.title,
+      description: scriptOutput.description,
+      tags: scriptOutput.tags,
+      hashtags: scriptOutput.hashtags,
+      privacy: 'public',
+    });
+    publishResult.youtubeVideoId = ytResult.youtubeVideoId;
+    publishResult.youtubeUrl = ytResult.youtubeUrl;
+    publishResult.status = 'published';
+    log.info(`Video published: ${ytResult.youtubeUrl}`);
+  }
+
+  context.publishResult = publishResult;
+  await writeJsonFile(join(outputDir, 'publish-result.json'), publishResult);
+
+  await updateStage(status, 'complete', outputDir);
+  log.info(`Pipeline complete for "${scriptOutput.title}"`);
+
+  return context;
 }
 
 /**
@@ -494,17 +651,16 @@ function buildThumbnailPrompt(
 }
 
 /**
- * Telegram Checkpoint 1: Send asset previews for approval before compilation.
- * Sends one image + one music sample per segment. Waits for approve/reject.
+ * Telegram Checkpoint 1: Send asset previews to Telegram (non-blocking).
+ * Returns the approval message ID for checkpoint tracking.
  */
-async function sendAssetPreview(
+async function sendAssetPreviewMessages(
   config: ChannelConfig,
   manifest: AssetManifest,
   contentPlan: ContentPlan
-): Promise<boolean> {
+): Promise<number> {
   const segmentCount = contentPlan.segmentCount ?? 1;
 
-  // Send each segment's image and a short music preview
   for (let i = 0; i < Math.min(segmentCount, manifest.images.length); i++) {
     const image = manifest.images[i];
     const music = manifest.music[i];
@@ -522,7 +678,6 @@ async function sendAssetPreview(
     }
   }
 
-  // Send prompts used so user can review what was sent to APIs
   const prompts = contentPlan.musicOnlyPrompts;
   const promptSummary = [
     `📋 Prompts Used:`,
@@ -542,8 +697,7 @@ async function sendAssetPreview(
     channelName: config.channel.name,
   });
 
-  const approved = await pollForApproval(messageId);
-  return approved;
+  return messageId;
 }
 
 /**
@@ -696,23 +850,16 @@ async function generateMusicOnlyMetadata(
   log.info(`Generated description (${scriptOutput.description.length} chars, ${segmentCount} chapters)`);
 }
 
-async function publishWithApproval(
+/**
+ * Telegram Checkpoint 2: Send final video preview to Telegram (non-blocking).
+ * Returns the approval message ID for checkpoint tracking.
+ */
+async function sendFinalApprovalMessages(
   config: ChannelConfig,
   compilation: CompilationResult,
   scriptOutput: ScriptOutput
-): Promise<PublishResult> {
-  const oauthPath = join(getChannelDir(config.channel.slug), '.youtube-oauth.json');
-
-  // Check if YouTube OAuth is available
-  let hasYouTubeOAuth = false;
-  try {
-    await access(oauthPath);
-    hasYouTubeOAuth = true;
-  } catch {
-    log.warn('No YouTube OAuth file — will send to Telegram for review only');
-  }
-
-  // Send preview clip + thumbnail to Telegram for review
+): Promise<number> {
+  // Send preview clip to Telegram
   const previewPath = join(compilation.videoPath, '..', 'preview-clip.mp4');
   const PREVIEW_SECONDS = 20;
   try {
@@ -767,42 +914,7 @@ async function publishWithApproval(
     channelName: config.channel.name,
   });
 
-  const publishResult: PublishResult = {
-    youtubeVideoId: '',
-    youtubeUrl: '',
-    status: 'pending_approval',
-  };
-
-  // Wait for approval
-  const approved = await pollForApproval(messageId);
-
-  if (!approved) {
-    publishResult.status = 'rejected';
-    log.warn(`Video rejected: ${scriptOutput.title}`);
-    return publishResult;
-  }
-
-  // Upload to YouTube if OAuth is available
-  if (hasYouTubeOAuth) {
-    const ytResult = await uploadVideo(oauthPath, {
-      videoPath: compilation.videoPath,
-      thumbnailPath: compilation.thumbnailPath,
-      title: scriptOutput.title,
-      description: scriptOutput.description,
-      tags: scriptOutput.tags,
-      hashtags: scriptOutput.hashtags,
-      privacy: 'public',
-    });
-    publishResult.youtubeVideoId = ytResult.youtubeVideoId;
-    publishResult.youtubeUrl = ytResult.youtubeUrl;
-    publishResult.status = 'published';
-    log.info(`Video published: ${ytResult.youtubeUrl}`);
-  } else {
-    publishResult.status = 'approved';
-    log.info(`Video approved (no YouTube upload — OAuth not configured)`);
-  }
-
-  return publishResult;
+  return messageId;
 }
 
 async function updateStage(
