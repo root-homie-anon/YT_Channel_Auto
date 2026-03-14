@@ -717,11 +717,14 @@ async function generateMusicOnlyMetadata(
   const segmentCount = contentPlan.segmentCount ?? 1;
   const totalDuration = compilation.durationSeconds;
 
-  // Load frameworks
+  // Load frameworks and rotation state (for scene name offset)
   const titleFramework = await loadFramework(channelDir, config.frameworks.title);
   const descFramework = config.frameworks.description
     ? await loadFramework(channelDir, config.frameworks.description)
     : '';
+  const { loadRotationState } = await import('./rotation-state.js');
+  const rotationState = await loadRotationState(channelDir);
+  const sceneOffset = (rotationState.imageSlot - 1) * 3; // offset scene names by rotation slot
 
   // Extract keyword pools from title framework
   const envWords = extractPoolWords(titleFramework, 'Environment Words');
@@ -744,30 +747,29 @@ async function generateMusicOnlyMetadata(
   const matchedAbstract = abstractNouns.filter(w => allPromptText.includes(w.toLowerCase()));
   const matchedColor = colorWords.filter(w => allPromptText.includes(w.toLowerCase()));
 
-  // Pick words for title construction (fallback to random pool selections)
+  // Pick words for description/tag construction (title uses its own pool picks)
   const envWord = matchedEnv[0] ?? envWords[Math.floor(Math.random() * envWords.length)] ?? 'Horizon';
   const atmoWord = matchedAtmo[0] ?? atmoWords[Math.floor(Math.random() * atmoWords.length)] ?? 'Silent';
-  const abstractNoun = matchedAbstract[0] ?? abstractNouns[Math.floor(Math.random() * abstractNouns.length)] ?? 'Drift';
-  const colorWord = matchedColor[0] ?? colorWords[Math.floor(Math.random() * colorWords.length)] ?? 'Neon';
 
   // --- Generate Title ---
-  // Build candidates from framework patterns
-  const titleCandidates: string[] = [];
-  for (const pattern of patterns) {
-    const title = buildTitleFromPattern(pattern, envWord, atmoWord, abstractNoun, colorWord);
-    if (title) titleCandidates.push(title);
+  // Determine which scene names will be used as chapters (to avoid in title)
+  const chapterSceneNames = new Set<string>();
+  if (segmentCount > 1) {
+    for (let i = 0; i < segmentCount; i++) {
+      const idx = (sceneOffset + i) % sceneNames.length;
+      chapterSceneNames.add(sceneNames[idx]!);
+    }
   }
-  // Fallback candidates
-  if (titleCandidates.length === 0) {
-    titleCandidates.push(
-      `${capitalize(atmoWord)} ${capitalize(envWord)}`,
-      `The ${capitalize(abstractNoun)}`,
-      `${capitalize(colorWord)} ${capitalize(envWord)}`,
-    );
-  }
-  // Pick title: prefer 30-50 chars, hard cap 60
+
+  // Build candidates from framework patterns using multiple pool words
+  const titleCandidates = buildTitleCandidates(
+    patterns, envWords, atmoWords, abstractNouns, colorWords,
+    matchedEnv, matchedAtmo, matchedAbstract, matchedColor, sceneNames
+  ).filter(t => !chapterSceneNames.has(t)); // don't duplicate a chapter name as the title
+
+  // Pick title: prefer 30-50 chars, accept 15-60, hard cap 60
   const title = titleCandidates.find(t => t.length >= 30 && t.length <= 50)
-    ?? titleCandidates.find(t => t.length >= 20 && t.length <= 60)
+    ?? titleCandidates.find(t => t.length >= 15 && t.length <= 60)
     ?? titleCandidates[0]!;
   scriptOutput.title = title.slice(0, 60);
   log.info(`Generated title: "${scriptOutput.title}" (${scriptOutput.title.length} chars)`);
@@ -789,7 +791,7 @@ async function generateMusicOnlyMetadata(
   const hours = Math.floor(totalDuration / 3600);
   const minutes = Math.floor((totalDuration % 3600) / 60);
   const durationStr = hours > 0
-    ? (minutes > 0 ? `${hours} hours` : `${hours} hour${hours > 1 ? 's' : ''}`)
+    ? `${hours} hour${hours > 1 ? 's' : ''}`
     : `${minutes} minutes`;
 
   // --- Generate Tags ---
@@ -850,13 +852,14 @@ async function generateMusicOnlyMetadata(
       const ts = h > 0
         ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
         : `${m}:${String(s).padStart(2, '0')}`;
-      const sceneName = sceneNames[i % sceneNames.length];
+      const sceneIdx = (sceneOffset + i) % sceneNames.length;
+      const sceneName = sceneNames[sceneIdx];
       descParts.push(`${ts} ${sceneName}`);
     }
   }
 
-  // CTA + hashtags
-  descParts.push('', '---', ctaLine, '', scriptOutput.hashtags.join(' '));
+  // CTA (hashtags appended by youtube-service at upload time)
+  descParts.push('', '---', ctaLine);
 
   scriptOutput.description = descParts.join('\n');
   log.info(`Generated description (${scriptOutput.description.length} chars, ${segmentCount} chapters)`);
@@ -872,9 +875,15 @@ function extractPoolWords(framework: string, sectionName: string): string[] {
 }
 
 function extractSceneNames(framework: string): string[] {
-  const match = framework.match(/## Scene Name Pool[\s\S]*?\n\n([\s\S]*?)(?=\n---|\n##|$)/);
-  if (!match) return [];
-  return match[1]!.split(',').map(s => s.trim()).filter(Boolean);
+  // Scene names are a comma-separated list on a single line containing multiple commas
+  const section = framework.match(/## Scene Name Pool[\s\S]*?\n\n([\s\S]*?)(?=\n---|\n##|$)/);
+  if (!section) return [];
+  // Find the line with the most commas — that's the scene name list
+  const lines = section[1]!.split('\n').filter(l => l.trim().length > 0);
+  const nameList = lines.reduce((best, line) =>
+    (line.split(',').length > best.split(',').length) ? line : best, '');
+  if (nameList.split(',').length < 3) return [];
+  return nameList.split(',').map(s => s.trim()).filter(Boolean);
 }
 
 function extractTitlePatterns(framework: string): string[] {
@@ -891,28 +900,88 @@ function extractTitlePatterns(framework: string): string[] {
   return patterns;
 }
 
-function buildTitleFromPattern(
-  pattern: string,
-  env: string,
-  atmo: string,
-  abstract: string,
-  color: string
-): string | null {
-  const e = capitalize(env);
-  const a = capitalize(atmo);
-  const ab = capitalize(abstract);
-  const c = capitalize(color);
+/**
+ * Build title candidates using framework patterns and keyword pools.
+ * Combines multiple pool words to produce evocative, album-track-style titles.
+ * Matched words (from prompts) are preferred; random pool picks fill the rest.
+ */
+function buildTitleCandidates(
+  patterns: string[],
+  envWords: string[],
+  atmoWords: string[],
+  abstractNouns: string[],
+  colorWords: string[],
+  matchedEnv: string[],
+  matchedAtmo: string[],
+  matchedAbstract: string[],
+  matchedColor: string[],
+  sceneNames: string[]
+): string[] {
+  const pick = (matched: string[], pool: string[], exclude?: string): string => {
+    const filtered = matched.filter(w => w !== exclude);
+    if (filtered.length > 0) return filtered[Math.floor(Math.random() * filtered.length)]!;
+    const poolFiltered = pool.filter(w => w !== exclude);
+    return poolFiltered[Math.floor(Math.random() * poolFiltered.length)] ?? 'Signal';
+  };
 
-  switch (pattern) {
-    case 'Place Name': return `${c} ${e} ${Math.floor(Math.random() * 9) + 1}`;
-    case 'State + Location': return `${a} ${e}`;
-    case 'The + Abstract': return `The ${ab}`;
-    case 'Compound Concept': return `${c} ${ab}`;
-    case 'Action Fragment': return `${a} Through ${e}`;
-    case 'Single Word': return ab;
-    case 'Colon Split': return `${e}: ${a}`;
-    default: return null;
+  const env1 = pick(matchedEnv, envWords);
+  const env2 = pick(matchedEnv, envWords, env1);
+  const atmo1 = pick(matchedAtmo, atmoWords);
+  const abs1 = pick(matchedAbstract, abstractNouns);
+  const abs2 = pick(matchedAbstract, abstractNouns, abs1);
+  const col1 = pick(matchedColor, colorWords);
+
+  const candidates: string[] = [];
+
+  for (const pattern of patterns) {
+    switch (pattern) {
+      case 'Place Name':
+        // "Chrome Corridor" or "Violet Transit Level"
+        candidates.push(`${capitalize(col1)} ${capitalize(env1)}`);
+        candidates.push(`${capitalize(col1)} ${capitalize(env1)} ${capitalize(env2)}`);
+        break;
+      case 'State + Location':
+        // "Silent Rooftop" or "Fading Light on the Overpass"
+        candidates.push(`${capitalize(atmo1)} ${capitalize(env1)}`);
+        candidates.push(`${capitalize(atmo1)} ${capitalize(abs1)} on the ${capitalize(env1)}`);
+        break;
+      case 'The + Abstract':
+        // "The Drift" or "The Last Frequency"
+        candidates.push(`The ${capitalize(abs1)}`);
+        candidates.push(`The ${capitalize(atmo1)} ${capitalize(abs1)}`);
+        break;
+      case 'Compound Concept':
+        // "Chrome Horizon" or "Pulse Decay at the Edge"
+        candidates.push(`${capitalize(col1)} ${capitalize(abs1)}`);
+        candidates.push(`${capitalize(abs1)} ${capitalize(abs2)}`);
+        break;
+      case 'Action Fragment':
+        // "Descending Through Fog" or "Drifting Past the Terminal"
+        candidates.push(`${capitalize(atmo1)} Through ${capitalize(env1)}`);
+        candidates.push(`${capitalize(atmo1)} Past the ${capitalize(env1)}`);
+        break;
+      case 'Single Word':
+        candidates.push(capitalize(abs1));
+        break;
+      case 'Colon Split':
+        // "Terminal: Night Shift" or "Corridor: Fading Signal"
+        candidates.push(`${capitalize(env1)}: ${capitalize(atmo1)} ${capitalize(abs1)}`);
+        candidates.push(`${capitalize(env1)}: ${capitalize(abs1)}`);
+        break;
+    }
   }
+
+  // Add scene name pool picks — these are pre-composed evocative names
+  if (sceneNames.length > 0) {
+    const sceneIdx = Math.floor(Math.random() * sceneNames.length);
+    candidates.push(sceneNames[sceneIdx]!);
+    // Also try a second one
+    const sceneIdx2 = (sceneIdx + 1) % sceneNames.length;
+    candidates.push(sceneNames[sceneIdx2]!);
+  }
+
+  // Deduplicate
+  return [...new Set(candidates)];
 }
 
 function extractFixedHashtags(framework: string): string[] {

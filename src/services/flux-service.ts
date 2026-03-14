@@ -85,7 +85,7 @@ export async function generateImage(options: FluxGenerateOptions): Promise<Asset
 }
 
 async function pollForResult(pollingUrl: string): Promise<string> {
-  const MAX_POLLS = 60;
+  const MAX_POLLS = 100;
   const POLL_INTERVAL_MS = 3000;
 
   for (let i = 0; i < MAX_POLLS; i++) {
@@ -109,14 +109,16 @@ async function pollForResult(pollingUrl: string): Promise<string> {
       return result.result.sample;
     }
 
-    if (result.status === 'Error' || result.status === 'Failed' || result.status === 'Content Moderated') {
-      throw new ApiError(`BFL image generation failed: ${result.status}`, 'flux');
+    if (result.status === 'Error' || result.status === 'Failed' || result.status === 'Content Moderated' || result.status === 'Request Moderated') {
+      const details = (result as Record<string, unknown>).details;
+      const reason = details ? ` (${JSON.stringify(details)})` : '';
+      throw new ApiError(`BFL image generation failed: ${result.status}${reason}`, 'flux');
     }
 
     log.debug(`Poll ${i + 1}/${MAX_POLLS}: status=${result.status}`);
   }
 
-  throw new ApiError('BFL image generation timed out after 3 minutes', 'flux');
+  throw new ApiError('BFL image generation timed out after 5 minutes', 'flux');
 }
 
 /**
