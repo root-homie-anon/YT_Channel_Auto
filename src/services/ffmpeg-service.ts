@@ -352,11 +352,18 @@ export async function compileShortFormVideo(options: CompileOptions): Promise<Co
   }
 }
 
+interface IntroOutroOptions {
+  introPath?: string | undefined;
+  outroPath?: string | undefined;
+  crossfadeDuration?: number | undefined;
+}
+
 export async function compileMusicOnlyVideo(
   outputDir: string,
   manifest: AssetManifest,
   resolution = '1920x1080',
-  visualFilterPreset?: string
+  visualFilterPreset?: string,
+  introOutro?: IntroOutroOptions
 ): Promise<CompilationResult> {
   await ensureDir(outputDir);
   const videoPath = join(outputDir, 'music-video.mp4');
@@ -561,8 +568,147 @@ export async function compileMusicOnlyVideo(
       }
     }
 
+    // Stitch intro/outro clips with crossfade
+    const ioCrossfade = introOutro?.crossfadeDuration ?? SEGMENT_CROSSFADE;
+    let introDurationForOffset = 0;
+
+    if (introOutro?.introPath || introOutro?.outroPath) {
+      const mainPath = videoPath.replace('.mp4', '-main.mp4');
+      const { rename: renameMain } = await import('fs/promises');
+      await renameMain(videoPath, mainPath);
+
+      const ioParts: string[] = [];
+      const ioInputs: string[] = [];
+      let ioIdx = 0;
+
+      // Collect inputs in order: intro (optional), main, outro (optional)
+      if (introOutro?.introPath) {
+        ioInputs.push('-i', introOutro.introPath);
+        ioIdx++;
+      }
+      const mainIdx = ioIdx;
+      ioInputs.push('-i', mainPath);
+      ioIdx++;
+      if (introOutro?.outroPath) {
+        ioInputs.push('-i', introOutro.outroPath);
+        ioIdx++;
+      }
+
+      // Scale all inputs to target resolution
+      const inputLabels: string[] = [];
+      let labelIdx = 0;
+      if (introOutro?.introPath) {
+        ioParts.push(
+          `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,` +
+          `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[iv${labelIdx}]`
+        );
+        inputLabels.push(`iv${labelIdx}`);
+        labelIdx++;
+      }
+      ioParts.push(
+        `[${mainIdx}:v]scale=${width}:${height}:flags=lanczos,setsar=1,fps=30[iv${labelIdx}]`
+      );
+      inputLabels.push(`iv${labelIdx}`);
+      labelIdx++;
+      if (introOutro?.outroPath) {
+        const outroIdx = introOutro?.introPath ? 2 : 1;
+        ioParts.push(
+          `[${outroIdx}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,` +
+          `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[iv${labelIdx}]`
+        );
+        inputLabels.push(`iv${labelIdx}`);
+        labelIdx++;
+      }
+
+      // Probe durations for crossfade offsets
+      const ioDurations: number[] = [];
+      if (introOutro?.introPath) {
+        const d = await getVideoDuration(introOutro.introPath);
+        ioDurations.push(d > 0 ? d : 10);
+        introDurationForOffset = (d > 0 ? d : 10) - ioCrossfade;
+      }
+      const mainDur = await getVideoDuration(mainPath);
+      ioDurations.push(mainDur > 0 ? mainDur : 60);
+      if (introOutro?.outroPath) {
+        const d = await getVideoDuration(introOutro.outroPath);
+        ioDurations.push(d > 0 ? d : 10);
+      }
+
+      // Video crossfade chain
+      let prevVLabel = inputLabels[0];
+      for (let i = 1; i < inputLabels.length; i++) {
+        const outLabel = i === inputLabels.length - 1 ? 'iovout' : `ioxf${i}`;
+        const cumDur = ioDurations.slice(0, i).reduce((s, d) => s + d, 0);
+        const cumXf = (i - 1) * ioCrossfade;
+        const offset = Math.max(0, cumDur - cumXf - ioCrossfade);
+        ioParts.push(
+          `[${prevVLabel}][${inputLabels[i]}]xfade=transition=fade:duration=${ioCrossfade}:offset=${offset.toFixed(3)}[${outLabel}]`
+        );
+        prevVLabel = outLabel;
+      }
+
+      // Audio crossfade chain
+      const audioLabels: string[] = [];
+      let aIdx = 0;
+      if (introOutro?.introPath) { audioLabels.push(`${aIdx}:a`); aIdx++; }
+      audioLabels.push(`${mainIdx}:a`);
+      if (introOutro?.outroPath) {
+        const outroIdx = introOutro?.introPath ? 2 : 1;
+        audioLabels.push(`${outroIdx}:a`);
+      }
+
+      let prevALabel = audioLabels[0];
+      for (let i = 1; i < audioLabels.length; i++) {
+        const outLabel = i === audioLabels.length - 1 ? 'ioaout' : `ioaxf${i}`;
+        ioParts.push(
+          `[${prevALabel}][${audioLabels[i]}]acrossfade=d=${ioCrossfade}:c1=tri:c2=tri[${outLabel}]`
+        );
+        prevALabel = outLabel;
+      }
+
+      const ioArgs = [
+        ...ioInputs,
+        '-filter_complex', ioParts.join(';'),
+        '-map', '[iovout]', '-map', '[ioaout]',
+        '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+        '-c:a', 'aac', '-b:a', '192k',
+        '-movflags', '+faststart',
+        '-y', videoPath,
+      ];
+
+      await runFfmpeg(ioArgs);
+
+      // Clean up temp main file
+      const { unlink } = await import('fs/promises');
+      await unlink(mainPath).catch(() => {});
+
+      log.info(`Intro/outro stitched with ${ioCrossfade}s crossfade`);
+    }
+
     const stats = await stat(videoPath);
     const duration = await getVideoDuration(videoPath);
+
+    // Compute segment timestamps for chapter markers
+    const segmentTimestamps: { index: number; label: string; startSeconds: number }[] = [];
+    if (segmentCount > 1) {
+      const segDurations: number[] = [];
+      for (let i = 0; i < segmentCount; i++) {
+        const pad = String(i).padStart(3, '0');
+        const segPath = join(outputDir, `segment-${pad}.mp4`);
+        const d = await getVideoDuration(segPath);
+        segDurations.push(d > 0 ? d : 60);
+      }
+
+      let cumulativeStart = introDurationForOffset;
+      for (let i = 0; i < segmentCount; i++) {
+        segmentTimestamps.push({
+          index: i,
+          label: `Scene ${i + 1}`,
+          startSeconds: Math.round(cumulativeStart),
+        });
+        cumulativeStart += segDurations[i] - SEGMENT_CROSSFADE;
+      }
+    }
 
     return {
       videoPath,
@@ -570,6 +716,7 @@ export async function compileMusicOnlyVideo(
       durationSeconds: duration,
       resolution,
       fileSizeBytes: stats.size,
+      segmentTimestamps: segmentTimestamps.length > 0 ? segmentTimestamps : undefined,
     };
   } catch (error) {
     if (error instanceof CompilationError) throw error;

@@ -14,6 +14,11 @@ export interface ChannelConfig {
   frameworks: FrameworkPaths;
   musicPrompt?: string;
   visualFilter?: string;
+  introOutro?: {
+    introPath?: string;
+    outroPath?: string;
+    crossfadeDuration?: number;
+  };
   toolCredits?: boolean;
   cta?: {
     supportLink?: string;
@@ -109,7 +114,6 @@ export interface ScriptOutput {
   title: string;
   script: ScriptSection[];
   description: string;
-  tags: string[];
   hashtags: string[];
   teaserScript?: ScriptSection[];
   productionBrief?: ProductionBrief;
@@ -145,13 +149,30 @@ export type AssetType = 'image' | 'voiceover' | 'music' | 'animation';
 
 // === Video Compilation Types ===
 
+export interface SegmentTimestamp {
+  index: number;
+  label: string;
+  startSeconds: number;
+}
+
+export function formatTimestamp(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 export interface CompilationResult {
   videoPath: string;
   thumbnailPath: string;
   durationSeconds: number;
   resolution: string;
   fileSizeBytes: number;
-  teaserVideoPath?: string;
+  teaserVideoPath?: string | undefined;
+  segmentTimestamps?: SegmentTimestamp[] | undefined;
 }
 
 // === Publishing Types ===
@@ -161,7 +182,6 @@ export interface PublishRequest {
   thumbnailPath: string;
   title: string;
   description: string;
-  tags: string[];
   hashtags: string[];
   scheduledTime?: Date;
   privacy: 'private' | 'unlisted' | 'public';

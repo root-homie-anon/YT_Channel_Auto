@@ -15,6 +15,7 @@ import {
   PipelineStatus,
   PublishResult,
   ScriptOutput,
+  formatTimestamp,
 } from '../types/index.js';
 import {
   getChannelDir,
@@ -289,8 +290,40 @@ async function runFromCompilation(
     );
   }
 
+  // Inject chapter markers into description if segment timestamps exist
+  if (context.compilationResult?.segmentTimestamps && context.compilationResult.segmentTimestamps.length > 0) {
+    // Load scene labels from agent (if available) to replace default "Scene N" labels
+    try {
+      const sceneLabels = await readJsonFile<string[]>(join(outputDir, 'scene-labels.json'));
+      if (Array.isArray(sceneLabels)) {
+        for (let i = 0; i < context.compilationResult.segmentTimestamps.length; i++) {
+          if (sceneLabels[i]) {
+            context.compilationResult.segmentTimestamps[i].label = sceneLabels[i];
+          }
+        }
+      }
+    } catch {
+      // No scene labels file — use default "Scene N" labels from compilation
+    }
+
+    const chapters = context.compilationResult.segmentTimestamps
+      .map((seg) => `${formatTimestamp(seg.startSeconds)} ${seg.label}`)
+      .join('\n');
+    // Insert chapters before the CTA line (marked by "---" separator or "Subscribe")
+    const desc = scriptOutput.description;
+    const ctaIndex = desc.indexOf('\n---\n');
+    if (ctaIndex !== -1) {
+      scriptOutput.description = desc.slice(0, ctaIndex) + '\n\n' + chapters + desc.slice(ctaIndex);
+    } else {
+      // Fallback: append before last paragraph
+      scriptOutput.description = desc + '\n\n' + chapters;
+    }
+    await writeJsonFile(join(outputDir, 'script-output.json'), scriptOutput);
+    log.info(`Injected ${context.compilationResult.segmentTimestamps.length} chapter markers into description`);
+  }
+
   // Stage: Send final approval (Telegram Checkpoint 2 — non-blocking)
-  // NOTE: Title, description, tags, and hashtags must be set in scriptOutput BEFORE
+  // NOTE: Title, description, and hashtags must be set in scriptOutput BEFORE
   // the pipeline reaches this point. For music-only channels, the @content-strategist
   // agent generates metadata using the channel's frameworks and prompt context.
   // For narrated channels, @script-writer generates all metadata.
@@ -367,7 +400,6 @@ async function runFromPublishing(
       thumbnailPath: compilation.thumbnailPath,
       title: scriptOutput.title,
       description: scriptOutput.description,
-      tags: scriptOutput.tags,
       hashtags: scriptOutput.hashtags,
       privacy,
       ...(scheduledTime ? { scheduledTime } : {}),
@@ -435,7 +467,7 @@ async function generateAssets(
     const segmentCount = contentPlan.segmentCount ?? 1;
     const totalDuration = contentPlan.targetDurationSeconds;
     const segmentDuration = Math.floor(totalDuration / segmentCount);
-    const musicDuration = Math.min(segmentDuration, 190); // Stable Audio 2.5 max 190s
+    const musicDuration = 190; // Always generate max-length tracks; segments are trimmed at compile
 
     // Validate prompt arrays match segment count
     if (prompts.imagePrompts.length < segmentCount) {
@@ -687,7 +719,18 @@ async function compileVideo(
   let result: CompilationResult;
 
   if (format === 'music-only') {
-    result = await compileMusicOnlyVideo(outputDir, manifest, '1920x1080', config.visualFilter);
+    const introOutroOpts = config.introOutro ? {
+      introPath: config.introOutro.introPath
+        ? join(channelDir, config.introOutro.introPath)
+        : undefined,
+      outroPath: config.introOutro.outroPath
+        ? join(channelDir, config.introOutro.outroPath)
+        : undefined,
+      crossfadeDuration: config.introOutro.crossfadeDuration,
+    } : undefined;
+    result = await compileMusicOnlyVideo(
+      outputDir, manifest, '1920x1080', config.visualFilter, introOutroOpts
+    );
   } else if (format === 'short') {
     result = await compileShortFormVideo({
       outputDir,
@@ -857,8 +900,7 @@ async function sendFinalApprovalMessages(
     `📝 Description:`,
     scriptOutput.description.slice(0, 500) + (scriptOutput.description.length > 500 ? '...' : ''),
     '',
-    `🏷 Tags: ${scriptOutput.tags.slice(0, 10).join(', ')}`,
-    `# ${scriptOutput.hashtags.join(' ')}`,
+    `🏷 ${scriptOutput.hashtags.join(' ')}`,
     '',
     'Reply /approve to publish or /reject to discard.',
   ];

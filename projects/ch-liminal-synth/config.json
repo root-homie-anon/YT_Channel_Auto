@@ -18,6 +18,11 @@
     "title": "frameworks/title-formula.md",
     "description": "frameworks/description-formula.md"
   },
+  "introOutro": {
+    "introPath": "assets/intro.mp4",
+    "outroPath": "assets/outro.mp4",
+    "crossfadeDuration": 3.0
+  },
   "visualFilter": "synthwave",
   "toolCredits": true,
   "cta": {
