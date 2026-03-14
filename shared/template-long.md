@@ -55,7 +55,7 @@ Agent: `@asset-producer`
 Run in this order:
 1. **Images** — call Flux for each image prompt using `frameworks/image-framework.md`
 2. **Voice Over** — call ElevenLabs with full script using voice ID `{{ELEVENLABS_VOICE_ID}}`
-3. **Music** — call Sonauto for one fresh background track using `frameworks/music-framework.md`
+3. **Music** — generate one fresh background track using `frameworks/music-framework.md`
 
 ### Step 4 — Telegram Checkpoint 1
 Agent: `@channel-manager`

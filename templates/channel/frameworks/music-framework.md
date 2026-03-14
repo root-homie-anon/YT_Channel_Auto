@@ -1,7 +1,7 @@
 # Music Framework
 
 > This file defines how `@asset-producer` generates music for all channel types.
-> Music is generated via Sonauto (`shared/sonauto.ts`).
+> Music is generated via Stable Audio (`src/services/stable-audio-service.ts`).
 > Track A: one background track per video, sits under VO, fresh generation per video.
 > Track B: one ~30-minute track per segment, the primary content of the video.
 
@@ -32,7 +32,7 @@ The agent combines both sources. Channel framework sets the outer boundaries. Pe
 
 ---
 
-## Sonauto Prompt Construction
+## Prompt Construction
 
 ### Track A Prompt Template
 
@@ -250,7 +250,7 @@ GENRE NOTES: [any video-specific genre shift within the channel framework]
 ARC: [how the music should evolve over the video — e.g. "builds slightly in middle third, returns to quiet for outro"]
 ```
 
-Agent reads this block, merges with channel framework defaults above, and constructs the Sonauto prompt.
+Agent reads this block, merges with channel framework defaults above, and constructs the music prompt.
 
 **Conflict rule:** If production brief energy level conflicts with channel framework (e.g. brief says moderate but framework is dark ambient), agent uses the lower energy level and notes the conflict in the session log.
 

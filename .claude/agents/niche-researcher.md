@@ -71,7 +71,7 @@ After research, populate each framework file by replacing all bracketed placehol
 ### music-framework.md
 - Genre and mood defaults for the niche
 - Pacing guidance tied to content style
-- Sonauto prompt patterns for niche-appropriate music
+- Prompt patterns for niche-appropriate music
 
 ### thumbnail-formula.md
 - Thumbnail style calibrated to niche competition

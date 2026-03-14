@@ -68,7 +68,7 @@ For each segment, in order:
 **c. Music Generation**
 - Read `frameworks/music-framework.md`
 - Apply session music concept
-- Call Sonauto for one track per segment matching segment duration
+- Generate one track per segment matching segment duration
 - Output: one audio track per segment
 
 ### Step 3 — Telegram Checkpoint 1

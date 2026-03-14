@@ -18,9 +18,6 @@ export const ENV = {
   // Replicate (Stable Audio 2.5)
   REPLICATE_API_TOKEN: process.env.REPLICATE_API_TOKEN ?? '',
 
-  // Sonauto (legacy)
-  SONAUTO_API_KEY: process.env.SONAUTO_API_KEY ?? '',
-
   // Runway ML
   RUNWAY_API_KEY: process.env.RUNWAY_API_KEY ?? '',
 

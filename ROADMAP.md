@@ -9,7 +9,7 @@
 Get the repo structure in place and all external services connected before any pipeline work begins.
 
 - [x] Initialize repo with full folder structure per architecture doc
-- [x] Set up `.env.example` with all shared API keys (ElevenLabs, Flux, Sonauto, Runway ML)
+- [x] Set up `.env.example` with all shared API keys (ElevenLabs, Flux, Stable Audio, Runway ML)
 - [x] Build `config-loader.ts` + `env.ts` — env loader and validator
 - [x] Write channel initialization flow — generates channel folder, `config.json`, `CLAUDE.md`, and `frameworks/` scaffold
 - [x] Confirm YouTube OAuth flow works per channel — tested and tokens saved for ch-strange-universe
@@ -24,7 +24,6 @@ Build and test each service integration independently before wiring into pipelin
 
 - [x] `elevenlabs-service.ts` — VO generation, accepts script + voice ID, returns audio file (ElevenLabs v1 TTS)
 - [x] `flux-service.ts` — image generation via BFL async polling, accepts prompt, returns image file
-- [x] `sonauto-service.ts` — music generation via v1/generations endpoint, accepts style prompt + duration, returns audio file
 - [x] `runway-service.ts` — photo-to-video animation via Runway Gen-3 Alpha, accepts image, returns animated clip
 - [x] `youtube-service.ts` — upload + scheduled post via YouTube Data API
 - [x] `telegram-service.ts` — send message/file, receive and parse user replies (approval polling)
@@ -40,7 +39,7 @@ Wire the full long-form narrated pipeline end to end.
 
 - [x] `@content-strategist` — agent defined, reads channel config, extracts image cues from script
 - [x] `@script-writer` — agent defined for long script using script-formula.md
-- [x] `@asset-producer` — agent defined, calls Flux, ElevenLabs, Sonauto in sequence
+- [x] `@asset-producer` — agent defined, calls Flux, ElevenLabs, Stable Audio in sequence
 - [x] Telegram approval — single approval gate (approve/reject via bot)
 - [x] `@video-compiler` — FFmpeg compile, Ken Burns + crossfade, 16:9 1080p
 - [x] `@video-compiler` — thumbnail generation via FFmpeg
@@ -70,7 +69,7 @@ Build the music-only production track independently.
 
 - [x] `compileMusicOnlyVideo` in ffmpeg-service — image looped over music track
 - [x] Pipeline handles `music-only` format
-- [ ] Per-segment loop — Flux image → Runway ML animation → Sonauto music track — **not yet wired**
+- [ ] Per-segment loop — Flux image → Runway ML animation → Stable Audio music track — **not yet wired**
 - [ ] Segment-based compilation with crossfade — **not yet implemented**
 - [ ] Telegram checkpoint for segment previews — **not yet implemented**
 

@@ -40,7 +40,6 @@ YT_Channel_Auto/
 │   │   ├── pipeline.ts                ← full pipeline orchestrator
 │   │   ├── flux-service.ts            ← image generation
 │   │   ├── elevenlabs-service.ts      ← VO generation
-│   │   ├── sonauto-service.ts         ← music generation
 │   │   ├── runway-service.ts          ← photo-to-video animation
 │   │   ├── nanobana-service.ts        ← Gemini NB2 thumbnail generation
 │   │   ├── ffmpeg-service.ts          ← video compilation + thumbnails
@@ -139,7 +138,7 @@ The system generates the channel folder, `CLAUDE.md`, and `config.json` automati
    - Full script narration
    - Output: VO audio file
 
-5. Music Gen (Sonauto)
+5. Music Gen (Stable Audio)
    - Fresh track generated per video (not reused)
    - Uses channel music style framework
    - Background role — sits under VO
@@ -241,7 +240,7 @@ The system generates the channel folder, `CLAUDE.md`, and `config.json` automati
       - No Ken Burns — animation IS the motion
       - Output: short animated clip per segment
 
-   c. Music Gen (Sonauto)
+   c. Music Gen (Stable Audio)
       - One ~30-minute track per segment
       - Uses channel music framework + session music concept
       - Output: audio file per segment
@@ -283,7 +282,7 @@ Five agents, defaulted for every video project. No on-the-fly creation, no user 
 |-------|------|-----------------|
 | `@content-strategist` | strategist | Reads channel config, plans content, extracts image cues from script, drives session |
 | `@script-writer` | content | Script gen (long), teaser script gen (short), title/description/tags/hashtags |
-| `@asset-producer` | producer | Calls Flux (images), ElevenLabs (VO), Sonauto (music), Runway ML (animation) |
+| `@asset-producer` | producer | Calls Flux (images), ElevenLabs (VO), Stable Audio (music), Runway ML (animation) |
 | `@video-compiler` | engineer | Remotion compilation for all formats, thumbnail gen |
 | `@channel-manager` | ops | YouTube scheduling/posting, Telegram approval bot, channel config management |
 
@@ -294,7 +293,7 @@ Five agents, defaulted for every video project. No on-the-fly creation, no user 
 | Service | Purpose | Cost Profile |
 |---------|---------|-------------|
 | ElevenLabs | Voice over generation | Per character, varies by plan |
-| Sonauto | Music generation | TBD — per generation |
+| Stable Audio 2.5 (Replicate) | Music generation | Per generation via Replicate |
 | Flux | Image generation | Per image, pay-as-you-go |
 | Runway ML | Photo-to-video animation (Gen-4 Turbo) | $0.05/sec of output, pay-as-you-go |
 | YouTube Data API | Upload + scheduling | Free |
@@ -356,7 +355,6 @@ Agents are pre-defined in `.claude/agents/`. The factory hook shows existing age
 - [ ] Thumbnail formula specifics (to be researched + finalized)
 - [ ] Title/description/tags formula specifics (to be researched + finalized)
 - [ ] Image reframing strategy for 9:16 shorts (test at implementation phase)
-- [ ] Sonauto pricing/limits at scale
 - [ ] Runway ML Gen-4 Turbo API — confirm loop output behavior and max clip duration
 - [ ] Chapter marker automation logic for long-form descriptions
 - [ ] CLI entry point for triggering production runs
@@ -368,7 +366,7 @@ Agents are pre-defined in `.claude/agents/`. The factory hook shows existing age
 
 - [x] Full TypeScript project scaffold (ESM, strict mode, Prettier)
 - [x] All 5 agent definitions in `.claude/agents/`
-- [x] All 7 service integrations (Flux, ElevenLabs, Sonauto, Runway ML, YouTube, Telegram, FFmpeg)
+- [x] All 7 service integrations (Flux, ElevenLabs, Stable Audio, Runway ML, YouTube, Telegram, FFmpeg)
 - [x] Pipeline orchestrator — assets → compile → upload → Telegram approval → publish
 - [x] Type system — ChannelConfig, ScriptOutput, AssetManifest, CompilationResult, PipelineContext
 - [x] Custom error classes — PipelineError, ApiError, ConfigError, AssetError, CompilationError

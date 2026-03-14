@@ -1,7 +1,7 @@
 # Music Framework — Strange Universe
 
 > This file defines how `@asset-producer` generates background music for Strange Universe videos.
-> Music is generated via Sonauto (`shared/sonauto.ts`).
+> Music is generated via Stable Audio (`src/services/stable-audio-service.ts`).
 > Track A only — this is a narrated channel, not a music-only channel.
 > One fresh background track per video, sits under VO at low volume.
 
@@ -43,7 +43,7 @@
 
 ---
 
-## Sonauto Prompt Construction (Track A)
+## Prompt Construction (Track A)
 
 ```
 [GENRE + STYLE]: Dark cinematic ambient with electronic undertones, investigation documentary score
@@ -89,7 +89,7 @@ GENRE NOTES: [any video-specific genre shift within the channel framework]
 ARC: [how the music should evolve over the video]
 ```
 
-Agent reads this block, merges with channel framework defaults above, and constructs the Sonauto prompt. Production brief direction always operates within the boundaries set by this framework — it cannot override the fundamental tone (e.g., it cannot request upbeat music).
+Agent reads this block, merges with channel framework defaults above, and constructs the music prompt. Production brief direction always operates within the boundaries set by this framework — it cannot override the fundamental tone (e.g., it cannot request upbeat music).
 
 **Conflict rule:** If production brief requests energy above "gentle," agent uses "gentle" and notes the conflict in the session log.
 

@@ -69,7 +69,7 @@ Per-section image cues (extracted from script.md in order):
 
 ## Music Direction
 
-> Read by: `@asset-producer` (Sonauto music generation)
+> Read by: `@asset-producer` (music generation)
 > One background track generated per video. Sits under VO. Fresh generation — not reused.
 
 PRIMARY mood/emotion: [the dominant emotional tone the music must carry — one clear target]

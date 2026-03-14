@@ -12,9 +12,6 @@ export interface Config {
   gemini: {
     apiKey: string;
   };
-  sonauto: {
-    apiKey: string;
-  };
   runway: {
     apiKey: string;
   };
@@ -30,7 +27,6 @@ const REQUIRED_KEYS = [
   'ELEVENLABS_API_KEY',
   'FLUX_API_KEY',
   'GEMINI_API_KEY',
-  'SONAUTO_API_KEY',
   'RUNWAY_API_KEY',
   'TELEGRAM_BOT_TOKEN',
   'TELEGRAM_CHAT_ID',
@@ -70,9 +66,6 @@ function loadConfig(): Config {
     },
     gemini: {
       apiKey: requireEnv('GEMINI_API_KEY'),
-    },
-    sonauto: {
-      apiKey: requireEnv('SONAUTO_API_KEY'),
     },
     runway: {
       apiKey: requireEnv('RUNWAY_API_KEY'),

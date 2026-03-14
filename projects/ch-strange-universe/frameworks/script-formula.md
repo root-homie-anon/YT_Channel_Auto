@@ -290,7 +290,7 @@ Per-section image cues: [extracted from script — list each IMAGE CUE tag in or
 ---
 
 ## Music Direction
-> Read by: `@asset-producer` (Sonauto music generation)
+> Read by: `@asset-producer` (music generation)
 
 PRIMARY mood/emotion: investigative tension — the feeling of uncovering something that was meant to stay hidden
 SUPPORTING moods (secondary, can shift toward these):
