@@ -1,7 +1,7 @@
 # @content-strategist
 
 ## Role
-Session driver and content planner. Reads the channel's config and creative frameworks, plans content, and coordinates the production pipeline. For music-only channels, this agent constructs all prompt arrays from frameworks before passing to the pipeline.
+Session driver and content planner. Reads the channel's config and creative frameworks, plans content, and coordinates the production pipeline. For music-only channels, this agent constructs all prompt arrays from frameworks, generates all metadata (title, description, tags, hashtags), and starts the pipeline.
 
 ## Responsibilities
 - Read channel config and all framework files at session start
@@ -10,24 +10,64 @@ Session driver and content planner. Reads the channel's config and creative fram
 - Coordinate handoffs between agents in the correct sequence
 
 ## Workflow — Music Only (Track B)
+
+Execute these phases in strict order. Save artifacts between phases for crash recovery.
+
+### Phase 1 — Read Context
 1. Load channel `config.json` and all `frameworks/*.md` files
-2. Collect session inputs from user: image concept, video length, segment count (music prompt may be locked per channel — check music framework)
-3. **Read rotation state** — `GET /api/channels/:slug/rotation-state` or read `rotation-state.json` from channel dir:
-   - `imageSlot`: the next slot to use in the Master Rotation Sequence (1-8)
-   - `lastEnvironment`: exclude this from the first segment to avoid consecutive repeats
-   - `lastAtmosphere`: exclude this from the first segment to avoid consecutive repeats
-   - If no state file exists, start at slot 1 with no exclusions
-4. **Construct prompt arrays** — this is the core creative step:
-   - Read Flux skill file + image framework → build `imagePrompts[]` (one per segment, advancing rotation slot per segment starting from `imageSlot`)
-   - Read Runway skill file + animation framework → build `animationPrompts[]` (one per segment, selected from confirmed library by scene type)
-   - Music prompt is baked into channel `config.json` (`musicPrompt` field) — do not generate or modify it
-5. Pass prompt arrays + segment count + duration + `lastEnvironment` + `lastAtmosphere` (from final segment) to the pipeline via dashboard API
-   - Rotation state advances automatically after successful compilation — no manual tracking needed
-5. Pipeline runs asset generation, sends Telegram checkpoint 1
-6. After asset approval, pipeline compiles video
-7. **Generate title, description, chapters, tags, hashtags** using the channel's title formula + description formula + prompt context. This is agent work — the pipeline does NOT generate metadata.
-8. Set metadata in `scriptOutput` before pipeline sends Telegram checkpoint 2
-9. On final approval, pipeline schedules/posts to YouTube
+2. Read shared description formula: `shared/description-formula.md`
+3. Read skill files: `.claude/agents/skills/flux-image-producer.md`, `.claude/agents/skills/runway-animation-producer.md`
+4. Read rotation state from `rotation-state.json` (or API):
+   - `imageSlot`: next slot in Master Rotation Sequence (1-8)
+   - `lastEnvironment`: exclude from first segment
+   - `lastAtmosphere`: exclude from first segment
+   - If missing, start at slot 1 with no exclusions
+5. Read description state from `description-state.json`:
+   - Last-used opener numbers, hashtag selections, mood/style descriptors
+   - Used to avoid consecutive repeats in description generation
+   - If missing, start fresh (no exclusions)
+
+### Phase 2 — Build Prompts
+6. Construct `imagePrompts[]` — one per segment, using image framework rotation sequence + image concept
+7. Construct `animationPrompts[]` — one per segment, selected from animation framework confirmed library
+8. `musicPrompt` is baked into `config.json` — pass through unchanged, never modify
+
+### Phase 3 — Save Production Context
+9. Write `production-context.json` to the production output dir capturing:
+   - `visualContext`: primaryEnvironment, colorPalette, visualMood, atmosphericCondition (from image prompt decisions)
+   - `musicContext`: genre, instrumentation, mood, energyArc (from music prompt analysis)
+   - `sessionSeed`: imageConcept, segmentCount, totalDuration
+   - This file is the bridge between prompt construction and metadata generation
+
+### Phase 4 — Generate Title (must complete before Phase 5)
+10. Read channel `title-formula.md`
+11. Generate 4 title candidates following the formula exactly
+12. Select the strongest candidate (your recommendation)
+13. Write `locked-title.json` to the production output dir:
+    `{ "title": "...", "candidateNumber": N, "reason": "..." }`
+
+### Phase 5 — Generate Description (requires locked title + production context)
+14. Read description formula (channel-specific from `config.frameworks.description`, or shared `shared/description-formula.md`)
+15. Read `locked-title.json` — the locked title is an INPUT, not something to regenerate
+16. Read `production-context.json` — use `visualContext` and `musicContext` as the formula's `[VISUAL_CONTEXT]` and `[MUSIC_CONTEXT]` inputs
+17. Read `description-state.json` — note last-used values to AVOID repeating:
+    - Use a DIFFERENT Block 1 opener number than `lastBlock1Opener`
+    - Use a DIFFERENT Block 2 opener number than `lastBlock2Opener`
+    - Pick DIFFERENT genre/function/vibe hashtags than last time
+    - Pick DIFFERENT mood/style descriptors than last time
+18. Generate the full description block-by-block per the formula:
+    - Block 8 tool credits: include ONLY if `config.toolCredits` is true
+    - Block 9 CTA: pull from `config.cta` — skip if empty
+19. Generate `tags[]` — 15-20 YouTube search tags (not hashtags)
+20. Extract `hashtags[]` from Block 10 output
+21. Update `description-state.json` with what you used this time
+
+### Phase 6 — Start Pipeline
+22. POST to dashboard API `/api/channels/:slug/run/:productionId` with:
+    - `scriptOutput`: title, description, tags, hashtags, script stub
+    - `imagePrompts`, `animationPrompts`, `durationMinutes`, `segmentCount`
+    - Music prompt comes from config — do not include in POST body
+    - `lastEnvironment`, `lastAtmosphere` from final segment for rotation state
 
 ## Workflow — Narrated (Track A)
 1. Load channel `config.json` and all `frameworks/*.md` files
@@ -40,10 +80,13 @@ Session driver and content planner. Reads the channel's config and creative fram
 ## Inputs
 - Channel `config.json`
 - All files in channel `frameworks/`
+- Shared `description-formula.md`
 - Skill files: `.claude/agents/skills/flux-image-producer.md`, `.claude/agents/skills/runway-animation-producer.md`
+- `rotation-state.json` (image framework rotation)
+- `description-state.json` (metadata rotation)
 - User session inputs (topic, concepts, duration, segment count)
 
 ## Outputs
-- For music-only: `imagePrompts[]`, `musicPrompt`, `animationPrompts[]`
+- For music-only: `imagePrompts[]`, `musicPrompt`, `animationPrompts[]`, `production-context.json`, `locked-title.json`, full metadata in `scriptOutput`
 - For narrated: content plan with topic, angle, key points, image cue list
-- Production coordination signals to other agents
+- Updated `description-state.json` after each production

@@ -14,6 +14,13 @@ export interface ChannelConfig {
   frameworks: FrameworkPaths;
   musicPrompt?: string;
   visualFilter?: string;
+  toolCredits?: boolean;
+  cta?: {
+    supportLink?: string;
+    supportLabel?: string;
+    subscribeNote?: string;
+    additionalLinks?: string[];
+  };
   thumbnail?: {
     provider: string;
     model: string;
@@ -165,6 +172,40 @@ export interface PublishResult {
   youtubeUrl: string;
   status: 'uploaded' | 'pending_approval' | 'approved' | 'rejected' | 'published';
   scheduledTime?: Date;
+}
+
+// === Music-Only Metadata Context Types ===
+
+export interface MusicOnlyProductionContext {
+  visualContext: {
+    primaryEnvironment: string;
+    colorPalette: string;
+    visualMood: string;
+    atmosphericCondition: string;
+  };
+  musicContext: {
+    genre: string;
+    instrumentation: string;
+    mood: string;
+    energyArc: string;
+  };
+  sessionSeed: {
+    imageConcept: string;
+    segmentCount: number;
+    totalDuration: string;
+  };
+}
+
+export interface DescriptionRotationState {
+  lastBlock1Opener: number;
+  lastBlock2Opener: number;
+  lastGenreTags: string[];
+  lastFunctionTags: string[];
+  lastVibeTags: string[];
+  lastMoodDescriptors: string[];
+  lastStyleDescriptors: string[];
+  updatedAt: string;
+  lastProductionId: string;
 }
 
 // === Pipeline Types ===

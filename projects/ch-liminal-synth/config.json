@@ -18,5 +18,12 @@
     "title": "frameworks/title-formula.md",
     "description": "frameworks/description-formula.md"
   },
-  "visualFilter": "synthwave"
+  "visualFilter": "synthwave",
+  "toolCredits": true,
+  "cta": {
+    "supportLink": "",
+    "supportLabel": "",
+    "subscribeNote": "",
+    "additionalLinks": []
+  }
 }
