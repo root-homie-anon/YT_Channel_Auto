@@ -7,8 +7,9 @@ const DEFAULT_DURATIONS: Record<ChannelFormat, number> = {
   'music-only': 3600,
 };
 
+const MUSIC_SEGMENT_DURATION = 190; // Stable Audio 2.5 max per generation
+
 export interface MusicOnlyOptions {
-  durationMinutes?: number;
   segmentCount?: number;
   imagePrompts: string[];
   musicPrompt: string;
@@ -22,10 +23,12 @@ export function buildContentPlan(
   config: ChannelConfig,
   musicOptions?: MusicOnlyOptions,
 ): ContentPlan {
-  const duration =
-    config.channel.format === 'music-only' && musicOptions?.durationMinutes
-      ? musicOptions.durationMinutes * 60
-      : DEFAULT_DURATIONS[config.channel.format];
+  const segments = config.channel.format === 'music-only'
+    ? (musicOptions?.segmentCount ?? 1)
+    : 0;
+  const duration = config.channel.format === 'music-only'
+    ? segments * MUSIC_SEGMENT_DURATION
+    : DEFAULT_DURATIONS[config.channel.format];
 
   const plan: ContentPlan = {
     topic,

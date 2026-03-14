@@ -64,39 +64,13 @@
               <!-- Music-only channel fields -->
               <div id="music-only-produce" style="display:none;">
                 <div class="form-group">
-                  <label>Image Concept</label>
-                  <input type="text" id="produce-image-concept" placeholder="e.g. Neon Tokyo rain-soaked streets">
+                  <label>Title Ideas</label>
+                  <input type="text" id="produce-image-concept" placeholder="e.g. Neon Drift Through Midnight Tokyo">
                 </div>
-                <div style="display:flex;gap:12px;">
-                  <div class="form-group" style="flex:1;">
-                    <label>Duration (minutes)</label>
-                    <input type="number" id="produce-duration" placeholder="e.g. 2, 60, 480" step="1" min="1">
-                  </div>
-                  <div class="form-group" style="flex:1;">
-                    <label>Segment Count</label>
-                    <input type="number" id="produce-segments" placeholder="0 = seamless" min="0">
-                  </div>
+                <div class="form-group">
+                  <label>Segment Count</label>
+                  <input type="number" id="produce-segments" placeholder="1 = single track, 5 = ~15min" min="1" value="1">
                 </div>
-                <!-- Metadata (title, description, tags, hashtags) -->
-                <details id="metadata-section" style="margin-top:8px;">
-                  <summary style="cursor:pointer;color:var(--text2);font-size:13px;">Metadata (title, description, tags, hashtags)</summary>
-                  <div class="form-group" style="margin-top:8px;">
-                    <label>Title <span style="color:var(--text2);font-size:12px">(leave blank for agent to generate)</span></label>
-                    <input type="text" id="produce-title" placeholder="Video title (50-70 chars ideal)">
-                  </div>
-                  <div class="form-group">
-                    <label>Description</label>
-                    <textarea id="produce-description" rows="3" placeholder="Video description"></textarea>
-                  </div>
-                  <div class="form-group">
-                    <label>Tags <span style="color:var(--text2);font-size:12px">(comma-separated)</span></label>
-                    <input type="text" id="produce-tags" placeholder="e.g. synthwave, dark ambient, focus music">
-                  </div>
-                  <div class="form-group">
-                    <label>Hashtags <span style="color:var(--text2);font-size:12px">(space-separated, include #)</span></label>
-                    <input type="text" id="produce-hashtags" placeholder="e.g. #synthwave #darkambient #focusmusic">
-                  </div>
-                </details>
               </div>
               <div class="btn-group">
                 <button class="btn btn-primary" onclick="startProduction()">Produce Now</button>

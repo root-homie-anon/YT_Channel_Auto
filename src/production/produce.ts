@@ -26,8 +26,9 @@ export interface ProductionSetup {
   };
 }
 
+const MUSIC_SEGMENT_DURATION = 190;
+
 export interface ProductionOptions {
-  durationMinutes?: number;
   segmentCount?: number;
 }
 
@@ -58,9 +59,9 @@ export async function setupProduction(
     angle: '',
     keyPoints: [],
     targetDurationSeconds:
-      config.channel.format === 'music-only' && options?.durationMinutes
-        ? options.durationMinutes * 60
-        : config.channel.format === 'music-only' ? 3600 : 600,
+      config.channel.format === 'music-only'
+        ? (options?.segmentCount ?? 1) * MUSIC_SEGMENT_DURATION
+        : 600,
     format: config.channel.format,
   };
 
@@ -123,7 +124,6 @@ export function buildScriptOutput(params: {
     durationSeconds: number;
   }>;
   description: string;
-  tags: string[];
   hashtags: string[];
   teaserSections?: Array<{
     sectionName: string;
@@ -141,7 +141,6 @@ export function buildScriptOutput(params: {
       durationSeconds: s.durationSeconds,
     })),
     description: params.description,
-    tags: params.tags,
     hashtags: params.hashtags,
   };
 

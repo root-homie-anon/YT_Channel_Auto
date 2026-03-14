@@ -198,25 +198,14 @@ async function startProduction() {
   const body = {};
 
   if (isMusicOnly) {
-    const imageConcept = document.getElementById('produce-image-concept').value.trim();
-    if (!imageConcept) return toast('Enter an image concept', 'error');
+    const titleIdeas = document.getElementById('produce-image-concept').value.trim();
+    if (!titleIdeas) return toast('Enter title ideas', 'error');
 
-    body.topic = imageConcept;
+    body.topic = titleIdeas;
 
-    const dur = document.getElementById('produce-duration').value;
     const seg = document.getElementById('produce-segments').value;
-    if (dur) body.durationMinutes = parseInt(dur, 10);
-    if (seg) body.segmentCount = parseInt(seg, 10);
+    body.segmentCount = seg ? parseInt(seg, 10) : 1;
 
-    // Optional metadata
-    const title = document.getElementById('produce-title').value.trim();
-    const description = document.getElementById('produce-description').value.trim();
-    const tags = document.getElementById('produce-tags').value.trim();
-    const hashtags = document.getElementById('produce-hashtags').value.trim();
-    if (title) body.title = title;
-    if (description) body.description = description;
-    if (tags) body.tags = tags.split(',').map(t => t.trim()).filter(Boolean);
-    if (hashtags) body.hashtags = hashtags.split(/\s+/).filter(h => h.startsWith('#'));
   } else {
     const topic = document.getElementById('produce-topic').value.trim();
     if (!topic) return toast('Enter a topic', 'error');
@@ -232,12 +221,7 @@ async function startProduction() {
     document.getElementById('produce-topic').value = '';
     if (isMusicOnly) {
       document.getElementById('produce-image-concept').value = '';
-      document.getElementById('produce-duration').value = '';
-      document.getElementById('produce-segments').value = '';
-      document.getElementById('produce-title').value = '';
-      document.getElementById('produce-description').value = '';
-      document.getElementById('produce-tags').value = '';
-      document.getElementById('produce-hashtags').value = '';
+      document.getElementById('produce-segments').value = '1';
     }
     if (res.status === 'pending_script') {
       toast(`Production created — waiting for @script-writer (${res.productionId})`);

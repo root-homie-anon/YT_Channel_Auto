@@ -33,14 +33,14 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
   try {
     const slug = req.params.slug as string;
     const {
-      topic, scriptOutput, durationMinutes, segmentCount,
+      topic, scriptOutput, segmentCount,
       // Accept both singular (from dashboard UI) and plural (from agent API)
       imagePrompts: imagePromptsArr, imagePrompt: imagePromptSingle,
       musicPrompt: musicPromptBody,
       animationPrompts: animationPromptsArr, animationPrompt: animationPromptSingle,
       lastEnvironment, lastAtmosphere,
       // Optional metadata — if provided, used instead of stub defaults
-      title: metaTitle, description: metaDescription, tags: metaTags, hashtags: metaHashtags,
+      title: metaTitle, description: metaDescription, hashtags: metaHashtags,
     } = req.body;
 
     if (!topic) {
@@ -77,7 +77,7 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
     const hasPrompts = imagePrompts.length > 0 && animationPrompts.length > 0 && !!musicPrompt;
 
     const plan = isMusicOnly && hasPrompts
-      ? buildContentPlan(topic, config, { durationMinutes, segmentCount, imagePrompts, musicPrompt, animationPrompts, lastEnvironment, lastAtmosphere })
+      ? buildContentPlan(topic, config, { segmentCount, imagePrompts, musicPrompt, animationPrompts, lastEnvironment, lastAtmosphere })
       : buildContentPlan(topic, config);
     await writeJsonFile(join(outputDir, 'content-plan.json'), plan);
 
@@ -92,7 +92,6 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
       resolvedScript = {
         title: metaTitle ?? topic,
         description: metaDescription ?? '',
-        tags: metaTags ?? [],
         hashtags: metaHashtags ?? [],
         script: [{ sectionName: 'main', narration: '', imageCue: topic, durationSeconds: 0 }],
       };
@@ -160,7 +159,7 @@ router.post('/:slug/run/:productionId', async (req: Request, res: Response) => {
     const {
       scriptOutput,
       imagePrompts, animationPrompts, musicPrompt: musicPromptBody,
-      durationMinutes, segmentCount, lastEnvironment, lastAtmosphere,
+      segmentCount, lastEnvironment, lastAtmosphere,
     } = req.body;
 
     if (!scriptOutput?.title || !scriptOutput?.script?.length) {
@@ -184,7 +183,7 @@ router.post('/:slug/run/:productionId', async (req: Request, res: Response) => {
     const musicPrompt = musicPromptBody ?? config.musicPrompt ?? '';
     const plan = isMusicOnly && imagePrompts?.length
       ? buildContentPlan(savedPlan.topic, config, {
-          durationMinutes, segmentCount, imagePrompts, musicPrompt,
+          segmentCount, imagePrompts, musicPrompt,
           animationPrompts: animationPrompts ?? [], lastEnvironment, lastAtmosphere,
         })
       : buildContentPlan(savedPlan.topic, config);
@@ -460,6 +459,34 @@ router.post('/:slug/retry/:productionId', async (req: Request, res: Response) =>
       });
 
     res.json({ status: 'retrying', productionId, message: 'Pipeline retrying — existing assets will be reused' });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// === Update YouTube Video Metadata ===
+router.post('/:slug/update-metadata/:videoId', async (req: Request, res: Response) => {
+  try {
+    const slug = req.params.slug as string;
+    const videoId = req.params.videoId as string;
+    const { title, description, hashtags } = req.body as {
+      title?: string;
+      description?: string;
+      hashtags?: string[];
+    };
+
+    if (!title && !description && !hashtags) {
+      res.status(400).json({ error: 'At least one of title, description, or hashtags is required' });
+      return;
+    }
+
+    const config = await loadChannelConfig(slug);
+    const oauthPath = join(PROJECT_ROOT, config.credentials.youtubeOAuthPath);
+
+    const { updateVideoMetadata } = await import('../../services/youtube-service.js');
+    await updateVideoMetadata(oauthPath, videoId, { title, description, hashtags });
+
+    res.json({ status: 'updated', videoId, message: 'Video metadata updated successfully' });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

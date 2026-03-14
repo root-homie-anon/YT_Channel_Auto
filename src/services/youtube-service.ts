@@ -62,7 +62,7 @@ export async function uploadVideo(
         snippet: {
           title: request.title,
           description: buildDescription(request.description, request.hashtags),
-          tags: request.tags,
+          tags: request.hashtags.map((h) => h.replace(/^#/, '')),
           categoryId: '22', // People & Blogs (default)
         },
         status: {
@@ -140,6 +140,58 @@ export async function updateVideoPrivacy(
   });
 
   log.info(`Video ${videoId} privacy updated to ${privacy}`);
+}
+
+export interface UpdateMetadataRequest {
+  title?: string | undefined;
+  description?: string | undefined;
+  hashtags?: string[] | undefined;
+  categoryId?: string | undefined;
+}
+
+export async function updateVideoMetadata(
+  oauthPath: string,
+  videoId: string,
+  updates: UpdateMetadataRequest
+): Promise<void> {
+  log.info(`Updating metadata for video ${videoId}`);
+
+  const auth = await getAuthClient(oauthPath);
+  const youtube = google.youtube({ version: 'v3', auth });
+
+  // Fetch current snippet to preserve fields we're not updating
+  const current = await youtube.videos.list({
+    part: ['snippet'],
+    id: [videoId],
+  });
+
+  const currentSnippet = current.data.items?.[0]?.snippet;
+  if (!currentSnippet) {
+    throw new ApiError(`Video ${videoId} not found`, 'youtube');
+  }
+
+  const snippet: Record<string, unknown> = {
+    title: updates.title ?? currentSnippet.title,
+    description: updates.description
+      ? (updates.hashtags
+        ? buildDescription(updates.description, updates.hashtags)
+        : updates.description)
+      : currentSnippet.description,
+    tags: updates.hashtags
+      ? updates.hashtags.map((h) => h.replace(/^#/, ''))
+      : currentSnippet.tags,
+    categoryId: updates.categoryId ?? currentSnippet.categoryId ?? '22',
+  };
+
+  await youtube.videos.update({
+    part: ['snippet'],
+    requestBody: {
+      id: videoId,
+      snippet,
+    },
+  });
+
+  log.info(`Video ${videoId} metadata updated`);
 }
 
 function buildDescription(description: string, hashtags: string[]): string {
