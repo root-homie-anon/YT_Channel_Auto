@@ -35,7 +35,7 @@ import {
   compileShortFormVideo,
   compileMusicOnlyVideo,
 } from './ffmpeg-service.js';
-import { generateThumbnailNB2 as generateThumbnailNBPro } from './nanobana-service.js';
+import { generateThumbnailNBPro, loadSystemInstruction } from './nanobana-service.js';
 import { advanceRotationState } from './rotation-state.js';
 import { uploadVideo } from './youtube-service.js';
 import { sendApprovalRequest, sendVideo, sendPhoto, sendAudio } from './telegram-service.js';
@@ -716,13 +716,23 @@ async function compileVideo(
 
   // Thumbnail generation via NBPro — skip for music-only channels
   // Thumbnail prompt comes from @script-writer's production brief, not built mechanically
-  if (format !== 'music-only') {
+  if (format !== 'music-only' && config.thumbnail) {
     const thumbnailPath = join(outputDir, 'thumbnail.png');
     const td = scriptOutput.productionBrief?.thumbnailDirection;
     if (!td) {
       log.warn('No thumbnailDirection in production brief — skipping thumbnail generation');
     } else {
       try {
+        // Load system instruction from config path
+        let systemInstruction: string | undefined;
+        if (config.thumbnail.systemInstructionPath) {
+          const { resolve } = await import('path');
+          const projectRoot = resolve(channelDir, '..');
+          const siPath = resolve(projectRoot, '..', config.thumbnail.systemInstructionPath);
+          systemInstruction = await loadSystemInstruction(siPath);
+        }
+
+        // Build prompt using thumbnail formula framework
         const thumbnailFramework = await loadFramework(channelDir, config.frameworks.thumbnail);
         const thumbnailPrompt = [
           `## Channel Style Guide`,
@@ -734,11 +744,15 @@ async function compileVideo(
           `Mood: ${td.emotionalHook}`,
           `Text overlay: "${td.textOverlay}"`,
         ].join('\n');
+
         const nbResult = await generateThumbnailNBPro({
           prompt: thumbnailPrompt,
-          aspectRatio: '16:9',
+          aspectRatio: (config.thumbnail.aspectRatio as '16:9' | '9:16') ?? '16:9',
           outputPath: thumbnailPath,
-          resolution: '4K',
+          resolution: (config.thumbnail.resolution as '2K' | '4K') ?? '4K',
+          ...(systemInstruction ? { systemInstruction } : {}),
+          ...(config.thumbnail.model ? { model: config.thumbnail.model } : {}),
+          ...(config.thumbnail.generationSettings ? { generationSettings: config.thumbnail.generationSettings } : {}),
         });
         result.thumbnailPath = nbResult.filePath;
         log.info(`NBPro thumbnail generated: ${nbResult.filePath}`);

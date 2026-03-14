@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
-import { writeFile, mkdir } from 'fs/promises';
+import { readFile, writeFile, mkdir } from 'fs/promises';
 import { dirname } from 'path';
 import { requireEnv } from '../utils/env.js';
 import { createLogger } from '../utils/logger.js';
@@ -15,6 +15,13 @@ export interface ThumbnailOptions {
   aspectRatio: AspectRatio;
   outputPath: string;
   resolution?: Resolution;
+  systemInstruction?: string;
+  model?: string;
+  generationSettings?: {
+    topP?: number;
+    maxOutputTokens?: number;
+    groundingEnabled?: boolean;
+  };
 }
 
 export interface ThumbnailResult {
@@ -23,29 +30,44 @@ export interface ThumbnailResult {
   generatedAt: string;
 }
 
-// NBPro: Gemini image generation for thumbnails
-const MODEL = process.env.GEMINI_IMAGE_MODEL ?? 'gemini-2.5-flash-image';
+const DEFAULT_MODEL = 'gemini-3-pro-image-preview';
 
 function getClient(): GoogleGenAI {
   return new GoogleGenAI({ apiKey: requireEnv('GEMINI_API_KEY') });
 }
 
-export async function generateThumbnailNB2(
+export async function generateThumbnailNBPro(
   options: ThumbnailOptions
 ): Promise<ThumbnailResult> {
-  const { prompt, aspectRatio, outputPath, resolution = '4K' } = options;
+  const {
+    prompt,
+    aspectRatio,
+    outputPath,
+    resolution = '4K',
+    systemInstruction,
+    model: modelOverride,
+    generationSettings,
+  } = options;
+
+  const model = modelOverride ?? process.env.GEMINI_IMAGE_MODEL ?? DEFAULT_MODEL;
 
   const fullPrompt = `Generate an image with these specifications:\n${prompt}\nOutput specs: ${resolution} resolution, ${aspectRatio} aspect ratio, thumbnail-optimized, all elements clearly readable at mobile size (320px width minimum).`;
 
-  log.info(`Generating thumbnail via ${MODEL} (${aspectRatio}, ${resolution})`);
+  log.info(`Generating thumbnail via ${model} (${aspectRatio}, ${resolution})`);
+  if (systemInstruction) {
+    log.info(`System instruction loaded (${systemInstruction.length} chars)`);
+  }
 
   try {
     const ai = getClient();
     const response = await ai.models.generateContent({
-      model: MODEL,
+      model,
       contents: fullPrompt,
       config: {
         responseModalities: ['IMAGE', 'TEXT'],
+        ...(systemInstruction ? { systemInstruction } : {}),
+        ...(generationSettings?.topP != null ? { topP: generationSettings.topP } : {}),
+        ...(generationSettings?.maxOutputTokens != null ? { maxOutputTokens: generationSettings.maxOutputTokens } : {}),
         imageConfig: {
           aspectRatio,
           imageSize: resolution,
@@ -56,7 +78,7 @@ export async function generateThumbnailNB2(
     // Extract image from response parts
     const parts = response.candidates?.[0]?.content?.parts;
     if (!parts) {
-      throw new ApiError(`No response parts returned from ${MODEL}`, 'nbpro');
+      throw new ApiError(`No response parts returned from ${model}`, 'nbpro');
     }
 
     const imagePart = parts.find(
@@ -68,7 +90,7 @@ export async function generateThumbnailNB2(
       : undefined;
 
     if (!imageData) {
-      throw new ApiError(`No image data returned from ${MODEL}`, 'nbpro');
+      throw new ApiError(`No image data returned from ${model}`, 'nbpro');
     }
 
     await mkdir(dirname(outputPath), { recursive: true });
@@ -80,7 +102,7 @@ export async function generateThumbnailNB2(
 
     return {
       filePath: outputPath,
-      model: MODEL,
+      model,
       generatedAt: new Date().toISOString(),
     };
   } catch (error) {
@@ -90,4 +112,12 @@ export async function generateThumbnailNB2(
       'nbpro'
     );
   }
+}
+
+/**
+ * Load a system instruction file from disk.
+ */
+export async function loadSystemInstruction(filePath: string): Promise<string> {
+  const content = await readFile(filePath, 'utf-8');
+  return content;
 }

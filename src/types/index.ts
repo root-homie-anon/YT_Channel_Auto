@@ -14,6 +14,20 @@ export interface ChannelConfig {
   frameworks: FrameworkPaths;
   musicPrompt?: string;
   visualFilter?: string;
+  thumbnail?: {
+    provider: string;
+    model: string;
+    systemInstruction?: string;
+    systemInstructionPath?: string;
+    aspectRatio: string;
+    resolution: string;
+    generationSettings?: {
+      topP?: number;
+      maxOutputTokens?: number;
+      groundingEnabled?: boolean;
+    };
+    shortsEnabled?: boolean;
+  };
 }
 
 export type ChannelFormat = 'long' | 'short' | 'long+short' | 'music-only';
