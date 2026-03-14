@@ -2,20 +2,32 @@
   "channel": {
     "name": "Strange Universe",
     "slug": "ch-strange-universe",
-    "format": "long+short",
-    "niche": "UFOs"
+    "format": "long",
+    "niche": "UFO sightings, extraterrestrial encounters, suppressed technologies, hidden history"
   },
   "credentials": {
     "youtubeOAuthPath": "projects/ch-strange-universe/.youtube-oauth.json",
-    "elevenLabsVoiceId": "EiNlNiXeDU1pqqOPrYMO"
+    "elevenLabsVoiceId": ""
   },
   "frameworks": {
     "script": "frameworks/script-formula.md",
     "image": "frameworks/image-framework.md",
     "music": "frameworks/music-framework.md",
     "thumbnail": "frameworks/thumbnail-formula.md",
-    "title": "frameworks/title-formula.md",
-    "teaser": "frameworks/teaser-formula.md",
-    "description": "../../shared/description-formula.md"
+    "title": "frameworks/title-formula.md"
+  },
+  "thumbnail": {
+    "provider": "nanobana",
+    "model": "gemini-3-pro-image-preview",
+    "systemInstruction": "strange-universe",
+    "systemInstructionPath": "projects/ch-strange-universe/system-instructions/thumbnail.md",
+    "aspectRatio": "16:9",
+    "resolution": "4K",
+    "generationSettings": {
+      "topP": 0.75,
+      "maxOutputTokens": 4000,
+      "groundingEnabled": true
+    },
+    "shortsEnabled": false
   }
 }
