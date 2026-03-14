@@ -24,6 +24,7 @@ export interface FrameworkPaths {
   music: string;
   thumbnail: string;
   title: string;
+  description?: string;
   teaser?: string;
 }
 

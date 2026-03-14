@@ -36,7 +36,7 @@ Once all inputs are confirmed, calculate segment duration and proceed to Step 1.
 | Animation framework | `frameworks/animation-framework.md` |
 | Music framework | `frameworks/music-framework.md` |
 | Title formula | `frameworks/title-formula.md` |
-| Description & hashtags | `shared/description-formula.md` (project root) |
+| Description & hashtags | `frameworks/description-formula.md` |
 
 ---
 
@@ -127,7 +127,7 @@ Agent: `@video-compiler`
 ### Step 5 — Title, Description & Chapters
 Agent: `@content-strategist`
 - Read `frameworks/title-formula.md` → generate title
-- Read `shared/description-formula.md` → generate description
+- Read `frameworks/description-formula.md` → generate description
 - Generate chapter markers (timestamps per segment)
 - Generate tags and hashtags
 - Output: title, description, tags, hashtags

@@ -1,131 +1,73 @@
-# Title Formula — [Channel Name]
-
-> This file defines how the `@script-writer` agent generates video titles for this channel.
-> Fill in all bracketed sections before the first production run.
-> Title generation runs after the script is complete and the thumbnail concept is locked.
-> The agent reads this file at the start of every title generation task.
+# Title Formula — Liminal Synth
 
 ---
 
-## Channel Title Preferences
+## Channel Title Identity
 
-**Title style:** [e.g. curiosity-driven / direct and informational / confrontational / narrative]
-**Tone:** [e.g. authoritative, conversational, dramatic — must match channel voice]
-**Avoid:** [e.g. all-caps words, exclamation marks, emojis, clickbait that the video doesn't deliver]
-**Character target:** 50–60 characters — fits without truncation across all placements
-**Hard cap:** 70 characters
-
----
-
-## The Pairing Principle
-
-Title and thumbnail are a single unit. They split one message across two elements.
-
-The agent must draft every title candidate against the thumbnail concept from the production brief.
-For each title, the agent asks: does this title + thumbnail combination create a stronger curiosity gap together than either does alone?
-
-**Pairing patterns:**
-- **Thumbnail asks the question, title names the subject** — viewer sees something intriguing visually, title tells them what they're looking at
-- **Title makes the claim, thumbnail shows the stakes** — title is provocative, thumbnail makes it visceral
-- **Both create tension from different angles** — title and thumbnail each add a layer the other doesn't, compounding the curiosity gap
-- **Thumbnail shows the outcome, title asks how** — before/after dynamic that drives clicks
-
-The agent notes which pairing pattern each title candidate uses.
+**Title style:** Evocative and atmospheric — titles name a place, state, or feeling, not a genre label
+**Tone:** Quiet, cinematic, poetic without being pretentious. Reads like a film title or album name.
+**Avoid:** Genre labels as the lead word ("Synthwave Mix", "Dark Ambient"), duration in title, all-caps, exclamation marks, emojis, "relaxing", "chill", "lo-fi", generic mood words
+**Character target:** 30–50 characters — short titles stand out in feeds
+**Hard cap:** 60 characters
 
 ---
 
-## Structural Patterns
+## Title Patterns
 
-The agent draws from these patterns. Multiple candidates should use different patterns — not variations of the same one.
+The pipeline selects from these patterns using keywords extracted from the image and music prompts. Each pattern produces a different feel — variety across productions keeps the channel fresh.
 
 | Pattern | Structure | Example |
 |---------|-----------|---------|
-| Curiosity Gap | The [Topic] Nobody Talks About | The Roman Strategy Nobody Talks About |
-| Specificity + Stakes | How [Specific Thing] Changed [Big Outcome] | How One Letter Changed the Course of WWII |
-| Revelation Frame | The Truth About [Topic] | The Truth About Passive Income |
-| Contradiction | [Accepted Belief] Is Actually [Opposite] | Everything You Know About Sleep Is Wrong |
-| Number + Promise | [N] Reasons [Topic] Will [Outcome] | 3 Reasons the Dollar Is Already Dead |
-| Direct Keyword | [Primary Keyword]: [Angle Clause] | Ancient Rome: Why It Really Collapsed |
-| The Reframe | Why [Topic] Isn't What You Think | Why Motivation Isn't What You Think |
-| Stakes Escalation | The [Topic] That [Dramatic Consequence] | The Decision That Ended an Empire |
+| Place Name | [Invented Location] | Neon Corridor 7 |
+| State + Location | [Mood] [Environment] | Silent Rooftop |
+| The + Abstract | The [Abstract Noun] | The Drift |
+| Compound Concept | [Noun] + [Noun] | Chrome Horizon |
+| Action Fragment | [Verb-ing] [Preposition] [Place] | Descending Through Fog |
+| Single Word | [Evocative Word] | Afterglow |
+| Colon Split | [Place/Concept]: [Qualifier] | Terminal: Night Shift |
+
+---
+
+## Keyword Pools
+
+Titles are built by combining words from these pools. The pipeline extracts relevant keywords from the production's image prompts and selects from the matching pool.
+
+### Environment Words
+rooftop, corridor, tunnel, overpass, skyline, tower, platform, terminal, transit, station, edge, threshold, district, sector, level, block, grid, stack, spine, crossing
+
+### Atmosphere Words
+silent, distant, hollow, fading, drifting, suspended, dissolving, ascending, descending, hovering, flickering, pulsing, humming, receding, vanishing
+
+### Abstract Nouns
+drift, signal, static, pulse, bloom, decay, trace, echo, haze, glow, current, threshold, meridian, vertex, orbit, wavelength, frequency, resonance
+
+### Color/Light Words
+neon, chrome, violet, cyan, phosphor, mercury, tungsten, halogen, plasma, prismatic
+
+---
+
+## Scene Name Pool
+
+For multi-segment videos, each segment gets a scene name used in chapter markers. Draw from this pool sequentially, do not repeat within a single production:
+
+Neon Drift, Chrome Horizon, Vapor Circuit, Midnight Signal, Pulse Decay, Static Bloom, Phantom Grid, Hollow Frequency, Afterglow, Terminal Haze, Silhouette, Data Rain, Ghost Protocol, Solar Wind, Echo Chamber, Dead Channel, Null Zone, Sine Wave, Phase Shift, Dark Matter, Sublevel, Upper Reach, Iron Sky, Glass Spine, Cold Front
 
 ---
 
 ## Construction Rules
 
-- **Keyword front-loaded** — primary keyword in the first 3–4 words for search visibility
-- **No question titles that can be answered yes or no** — "Is X bad?" → weak. "Why X Is Destroying Y" → strong
-- **Numbers beat vague superlatives** — "3 reasons" beats "many reasons," "the biggest" beats nothing
-- **Avoid:** "This is...", "So I...", "You won't believe...", "Must watch", generic hyperbole
-- **Specificity signals quality** — a specific detail in the title implies the video has depth
-- **Emotional target must match thumbnail** — they create one feeling together, not two competing ones
-- **Never mislead** — title must accurately represent what the video delivers. Retention collapse from misleading titles kills the channel.
+- Never start with a genre name (electronic, synthwave, ambient)
+- Never include duration (1 hour, 3h, 180 min)
+- Never include "mix", "compilation", "playlist", "session"
+- Prefer 2–4 word titles — brevity is strength
+- One title per production — no candidate voting needed
+- Title should feel like it could be an album track name
+- If the image prompt references a specific environment, lean into that
 
 ---
 
-## Inputs Required
+## What This Formula Does NOT Do
 
-The agent pulls these from the production brief before writing any candidates:
-
-- `Core hook phrase` — strongest 3–5 word phrase from the script or hook
-- `Primary keyword` — highest-value search term from research
-- `Supporting keywords` — 2–3 additional terms
-- `Angle in one clause` — distilled thesis
-- `Emotional target` — what the title should make the viewer feel
-- `Thumbnail concept` — from production brief thumbnail direction block
-
----
-
-## Output Format
-
-The agent delivers title candidates in this format:
-
-```
-TITLE CANDIDATES
-
-Inputs used:
-  Primary keyword: [X]
-  Core hook phrase: [X]
-  Emotional target: [X]
-  Thumbnail concept: [X]
-
----
-
-Option 1: [Title text]
-  Pattern: [pattern name]
-  Characters: [X]
-  Thumbnail pairing: [pairing pattern + one sentence on how they work together]
-  Rationale: [one sentence on why this works for this video]
-
-Option 2: [Title text]
-  Pattern: [pattern name]
-  Characters: [X]
-  Thumbnail pairing: [pairing pattern + one sentence on how they work together]
-  Rationale: [one sentence on why this works for this video]
-
-Option 3: [Title text]
-  Pattern: [pattern name]
-  Characters: [X]
-  Thumbnail pairing: [pairing pattern + one sentence on how they work together]
-  Rationale: [one sentence on why this works for this video]
-
-Option 4: [Title text — optional, only if a clearly distinct angle warrants it]
-  Pattern: [pattern name]
-  Characters: [X]
-  Thumbnail pairing: [pairing pattern + one sentence on how they work together]
-  Rationale: [one sentence on why this works for this video]
-
-Option 5: [Title text — optional]
-  Pattern: [pattern name]
-  Characters: [X]
-  Thumbnail pairing: [pairing pattern + one sentence on how they work together]
-  Rationale: [one sentence on why this works for this video]
-
----
-
-AGENT RECOMMENDATION: Option [N]
-Reason: [one sentence — why this is the strongest title + thumbnail combination]
-```
-
-User selects a title before description and tags generation begins.
-Selected title is locked into the production brief and used in the teaser CTA if a short is being produced.
+- No thumbnail pairing — music-only channels have no thumbnails
+- No production brief integration — titles derive from prompt keywords
+- No candidate voting — pipeline selects algorithmically from patterns
