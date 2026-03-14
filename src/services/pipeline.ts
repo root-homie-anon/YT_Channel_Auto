@@ -22,12 +22,11 @@ import {
   loadChannelConfig,
   loadFramework,
 } from '../utils/config-loader.js';
-import { generateProductionId, readJsonFile, writeJsonFile } from '../utils/file-helpers.js';
+import { generateProductionId, readJsonFile, writeJsonFile, fileExists } from '../utils/file-helpers.js';
 import { createLogger } from '../utils/logger.js';
 
 import { generateBatchImages, generateImage } from './flux-service.js';
 import { generateVoiceover } from './elevenlabs-service.js';
-import { generateMusicElevenLabs } from './elevenlabs-music-service.js';
 import { generateMusic as generateMusicStableAudio } from './replicate-audio-service.js';
 import { generateAnimation } from './runway-service.js';
 import { findFootageForCues, downloadClip } from './archive-service.js';
@@ -36,10 +35,15 @@ import {
   compileShortFormVideo,
   compileMusicOnlyVideo,
 } from './ffmpeg-service.js';
-import { generateThumbnailNB2 } from './nanobana-service.js';
+import { generateThumbnailNB2 as generateThumbnailNBPro } from './nanobana-service.js';
 import { advanceRotationState } from './rotation-state.js';
 import { uploadVideo } from './youtube-service.js';
 import { sendApprovalRequest, sendVideo, sendPhoto, sendAudio } from './telegram-service.js';
+import {
+  waitForCompilationSlot,
+  releaseCompilationSlot,
+  cleanupAfterPublish,
+} from './production-queue.js';
 
 const execFileAsync = promisify(execFile);
 const log = createLogger('pipeline');
@@ -155,11 +159,37 @@ export async function resumePipeline(
   };
 
   try {
+    if (status.stage === 'asset_generation' || status.stage === 'asset_preview' || status.stage === 'planning') {
+      // Crashed during asset generation — resume with skip logic for existing assets
+      log.info(`Resuming from ${status.stage} — existing assets will be reused`);
+      return await runPipeline(channelSlug, contentPlan, scriptOutput, productionId);
+    }
+
     if (status.stage === 'compilation') {
       // Resuming after asset approval — run compilation through to final checkpoint
       const manifest = await readJsonFile<AssetManifest>(join(outputDir, 'asset-manifest.json'));
       context.assetManifest = manifest;
       return await runFromCompilation(channelSlug, productionId, config, channelDir, outputDir, contentPlan, scriptOutput, context, status);
+    }
+
+    if (status.stage === 'approval' || status.stage === 'metadata_generation') {
+      // Crashed during approval send or metadata gen — re-run from compilation
+      // (compilation result should exist, if not, will re-compile)
+      const manifestExists = await fileExists(join(outputDir, 'asset-manifest.json'));
+      if (manifestExists) {
+        const manifest = await readJsonFile<AssetManifest>(join(outputDir, 'asset-manifest.json'));
+        context.assetManifest = manifest;
+        const compilationExists = await fileExists(join(outputDir, 'compilation-result.json'));
+        if (compilationExists) {
+          // Compilation done, just need to re-send approval
+          const compilation = await readJsonFile<CompilationResult>(join(outputDir, 'compilation-result.json'));
+          context.compilationResult = compilation;
+          return await runFromCompilation(channelSlug, productionId, config, channelDir, outputDir, contentPlan, scriptOutput, context, status);
+        }
+        return await runFromCompilation(channelSlug, productionId, config, channelDir, outputDir, contentPlan, scriptOutput, context, status);
+      }
+      // No manifest — restart from beginning
+      return await runPipeline(channelSlug, contentPlan, scriptOutput, productionId);
     }
 
     if (status.stage === 'publishing') {
@@ -202,13 +232,50 @@ async function runFromCompilation(
   const manifest = context.assetManifest ?? await readJsonFile<AssetManifest>(join(outputDir, 'asset-manifest.json'));
   context.assetManifest = manifest;
 
-  // Stage: Compilation
+  // Stage: Compilation — gated by concurrency limiter (1 at a time)
   await updateStage(status, 'compilation', outputDir);
-  log.info('Starting video compilation');
-  context.compilationResult = await compileVideo(
-    config, channelDir, outputDir, manifest, scriptOutput, teaserManifest
-  );
-  await writeJsonFile(join(outputDir, 'compilation-result.json'), context.compilationResult);
+
+  // Check if compilation already completed (crash recovery)
+  const compilationResultPath = join(outputDir, 'compilation-result.json');
+  if (await fileExists(compilationResultPath)) {
+    try {
+      const existingCompilation = await readJsonFile<CompilationResult>(compilationResultPath);
+      if (existingCompilation.videoPath && await fileExists(existingCompilation.videoPath)) {
+        log.info('Compilation result already exists, skipping');
+        context.compilationResult = existingCompilation;
+        // Skip to approval
+        await updateStage(status, 'approval', outputDir);
+        log.info('Sending final video for approval');
+        const messageId = await sendFinalApprovalMessages(config, context.compilationResult, scriptOutput);
+
+        const checkpoint: CheckpointData = {
+          type: 'final_approval',
+          channelSlug,
+          productionId,
+          telegramMessageId: messageId,
+          requestedAt: new Date().toISOString(),
+        };
+        status.stage = 'awaiting_final_approval';
+        status.checkpoint = checkpoint;
+        status.updatedAt = new Date();
+        await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
+        log.info('Pipeline paused — awaiting final approval (no timeout)');
+        return context;
+      }
+    } catch { /* re-compile */ }
+  }
+
+  log.info('Waiting for compilation slot...');
+  await waitForCompilationSlot();
+  try {
+    log.info('Starting video compilation');
+    context.compilationResult = await compileVideo(
+      config, channelDir, outputDir, manifest, scriptOutput, teaserManifest
+    );
+    await writeJsonFile(compilationResultPath, context.compilationResult);
+  } finally {
+    releaseCompilationSlot();
+  }
 
   // Advance rotation state after successful compilation (music-only)
   if (config.channel.format === 'music-only' && contentPlan.musicOnlyPrompts) {
@@ -222,16 +289,11 @@ async function runFromCompilation(
     );
   }
 
-  // Stage: Metadata Generation (music-only channels generate title/desc/tags from frameworks)
-  if (config.channel.format === 'music-only') {
-    await updateStage(status, 'metadata_generation', outputDir);
-    log.info('Generating metadata from frameworks');
-    await generateMusicOnlyMetadata(config, channelDir, contentPlan, scriptOutput, context.compilationResult);
-    await writeJsonFile(join(outputDir, 'script-output.json'), scriptOutput);
-    log.info(`Metadata generated — title: "${scriptOutput.title}"`);
-  }
-
   // Stage: Send final approval (Telegram Checkpoint 2 — non-blocking)
+  // NOTE: Title, description, tags, and hashtags must be set in scriptOutput BEFORE
+  // the pipeline reaches this point. For music-only channels, the @content-strategist
+  // agent generates metadata using the channel's frameworks and prompt context.
+  // For narrated channels, @script-writer generates all metadata.
   await updateStage(status, 'approval', outputDir);
   log.info('Sending final video for approval');
   const messageId = await sendFinalApprovalMessages(config, context.compilationResult, scriptOutput);
@@ -283,6 +345,23 @@ async function runFromPublishing(
   };
 
   if (hasYouTubeOAuth) {
+    // Read publish params (set by schedule endpoint) or default to public
+    let privacy: 'private' | 'unlisted' | 'public' = 'public';
+    let scheduledTime: Date | undefined;
+    try {
+      const params = await readJsonFile<{ privacy?: string; scheduledTime?: string }>(
+        join(outputDir, 'publish-params.json')
+      );
+      if (params.privacy === 'private' || params.privacy === 'unlisted' || params.privacy === 'public') {
+        privacy = params.privacy;
+      }
+      if (params.scheduledTime) {
+        scheduledTime = new Date(params.scheduledTime);
+      }
+    } catch {
+      // No publish params file — use defaults
+    }
+
     const ytResult = await uploadVideo(oauthPath, {
       videoPath: compilation.videoPath,
       thumbnailPath: compilation.thumbnailPath,
@@ -290,7 +369,8 @@ async function runFromPublishing(
       description: scriptOutput.description,
       tags: scriptOutput.tags,
       hashtags: scriptOutput.hashtags,
-      privacy: 'public',
+      privacy,
+      ...(scheduledTime ? { scheduledTime } : {}),
     });
     publishResult.youtubeVideoId = ytResult.youtubeVideoId;
     publishResult.youtubeUrl = ytResult.youtubeUrl;
@@ -304,50 +384,19 @@ async function runFromPublishing(
   await updateStage(status, 'complete', outputDir);
   log.info(`Pipeline complete for "${scriptOutput.title}"`);
 
+  // Post-publish cleanup — remove heavy asset files to save disk
+  if (publishResult.status === 'published') {
+    try {
+      await cleanupAfterPublish(outputDir);
+      log.info('Post-publish cleanup complete');
+    } catch (err) {
+      log.warn(`Post-publish cleanup failed: ${(err as Error).message}`);
+    }
+  }
+
   return context;
 }
 
-/**
- * Build a music prompt from the production brief and music framework.
- * Uses the framework's Sonauto prompt template structure with production
- * brief overrides for mood, arc, and instrumentation.
- */
-function buildMusicPrompt(
-  scriptOutput: ScriptOutput,
-  musicFramework: string,
-  _durationSeconds: number
-): string {
-  const brief = scriptOutput.productionBrief?.musicDirection;
-
-  // Extract genre/style from framework
-  const genreMatch = musicFramework.match(/\*\*Genre:\*\*\s*(.+)/);
-  const genre = genreMatch?.[1]?.split('—')[0]?.trim() ?? 'Dark cinematic ambient';
-
-  // Extract default instrumentation from framework
-  const instrumentMatch = musicFramework.match(/\*\*Default Instrumentation:\*\*\n([\s\S]*?)(?=\n\*\*)/);
-  const instruments = instrumentMatch?.[1]
-    ?.split('\n')
-    .map(l => l.replace(/^-\s*/, '').trim())
-    .filter(Boolean)
-    .join(', ') ?? 'deep sub-bass synth drones, sparse reverb-heavy piano, distant metallic textures';
-
-  const mood = brief?.primaryMood ?? 'investigative tension';
-  const supportingMoods = brief?.supportingMoods?.join(', ') ?? '';
-  const energy = brief?.energyLevel ?? 'Low';
-  const arc = brief?.arc ?? 'Opens sparse and tense, builds subtle layers, pulls back to reflective stillness';
-  const avoid = brief?.avoidMood ?? 'Horror stingers, sci-fi cliches, triumphant fanfares';
-
-  return [
-    `${genre}, investigation documentary score.`,
-    `Mood: ${mood}.${supportingMoods ? ` ${supportingMoods}.` : ''}`,
-    `Energy: ${energy} — ambient background layer, never competing with spoken narration.`,
-    `Instrumentation: ${instruments}. No percussion. No melody.`,
-    `Tempo: Slow and deliberate, 55-75 BPM or no discernible tempo.`,
-    `Structure: No lyrics. No prominent melodic hook. Continuous evolving atmospheric texture.`,
-    `Arc: ${arc}.`,
-    `Avoid: ${avoid}.`,
-  ].join('\n');
-}
 
 interface AssetGenerationResult {
   manifest: AssetManifest;
@@ -362,7 +411,6 @@ async function generateAssets(
   contentPlan?: ContentPlan,
 ): Promise<AssetGenerationResult> {
   const imageFramework = await loadFramework(channelDir, config.frameworks.image);
-  const musicFramework = await loadFramework(channelDir, config.frameworks.music);
   const isMusicOnly = config.channel.format === 'music-only';
   const hasTeaser = (config.channel.format === 'long+short' || config.channel.format === 'short')
     && scriptOutput.teaserScript && scriptOutput.teaserScript.length > 0;
@@ -405,23 +453,46 @@ async function generateAssets(
 
     log.info(`Music-only pipeline: ${segmentCount} segment(s), ${segmentDuration}s each, ${totalDuration}s total`);
 
+    // Load existing partial manifest if resuming after crash
+    const partialManifestPath = join(outputDir, 'asset-manifest.json');
+    if (await fileExists(partialManifestPath)) {
+      try {
+        const existing = await readJsonFile<AssetManifest>(partialManifestPath);
+        manifest.images = existing.images ?? [];
+        manifest.music = existing.music ?? [];
+        manifest.animations = existing.animations ?? [];
+        log.info(`Loaded partial manifest: ${manifest.images.length} images, ${manifest.music.length} music, ${manifest.animations.length} animations`);
+      } catch { /* start fresh */ }
+    }
+
     for (let i = 0; i < segmentCount; i++) {
       const pad = String(i).padStart(3, '0');
 
-      // -- Image: prompt comes from agent, passed through unchanged --
-      const imagePrompt = prompts.imagePrompts[i];
-      log.info(`Segment ${i}: image prompt = "${imagePrompt.slice(0, 80)}..."`);
+      // -- Image: skip if already exists on disk --
+      const imagePath = join(outputDir, 'images', `image-${pad}.png`);
+      if (await fileExists(imagePath) && manifest.images.some((a) => a.path === imagePath)) {
+        log.info(`Segment ${i}: image already exists, skipping`);
+      } else {
+        const imagePrompt = prompts.imagePrompts[i];
+        log.info(`Segment ${i}: image prompt = "${imagePrompt.slice(0, 80)}..."`);
 
-      const imageAsset = await generateImage({
-        prompt: imagePrompt,
-        outputPath: join(outputDir, 'images', `image-${pad}.png`),
-      });
-      manifest.images.push(imageAsset);
+        const imageAsset = await generateImage({
+          prompt: imagePrompt,
+          outputPath: imagePath,
+        });
+        // Replace or append
+        const existIdx = manifest.images.findIndex((a) => a.path === imagePath);
+        if (existIdx >= 0) manifest.images[existIdx] = imageAsset;
+        else manifest.images.push(imageAsset);
+      }
 
-      // -- Animation: Runway Gen-4 Turbo --
-      // Prompt comes from agent (selected from animation-framework.md confirmed library)
-      if (process.env.RUNWAY_API_KEY) {
+      // -- Animation: skip if already exists --
+      const animPath = join(outputDir, 'animations', `anim-${pad}.mp4`);
+      if (await fileExists(animPath) && manifest.animations.some((a) => a.path === animPath)) {
+        log.info(`Segment ${i}: animation already exists, skipping`);
+      } else if (process.env.RUNWAY_API_KEY) {
         try {
+          const imageAsset = manifest.images.find((a) => a.path === imagePath)!;
           const imageData = await readFile(imageAsset.path);
           const base64 = imageData.toString('base64');
           const dataUri = `data:image/png;base64,${base64}`;
@@ -431,102 +502,152 @@ async function generateAssets(
             imageUrl: dataUri,
             prompt: animPrompt,
             durationSeconds: 10,
-            outputPath: join(outputDir, 'animations', `anim-${pad}.mp4`),
+            outputPath: animPath,
           });
-          manifest.animations.push(animAsset);
+          const existIdx = manifest.animations.findIndex((a) => a.path === animPath);
+          if (existIdx >= 0) manifest.animations[existIdx] = animAsset;
+          else manifest.animations.push(animAsset);
         } catch (err) {
           log.warn(`Animation ${i} failed (non-fatal): ${(err as Error).message}`);
         }
       }
 
-      // -- Music: Stable Audio 2.5 --
-      // Single music prompt used for all segments (same sonic identity)
-      log.info(`Segment ${i}: music prompt = "${prompts.musicPrompt.slice(0, 80)}..." (${musicDuration}s)`);
+      // -- Music: skip if already exists --
+      const musicPath = join(outputDir, 'music', `music-${pad}.wav`);
+      if (await fileExists(musicPath) && manifest.music.some((a) => a.path === musicPath)) {
+        log.info(`Segment ${i}: music already exists, skipping`);
+      } else {
+        log.info(`Segment ${i}: music prompt = "${prompts.musicPrompt.slice(0, 80)}..." (${musicDuration}s)`);
 
-      const musicAsset = await generateMusicStableAudio({
-        prompt: prompts.musicPrompt,
-        durationSeconds: musicDuration,
-        outputPath: join(outputDir, 'music', `music-${pad}.wav`),
-      });
-      manifest.music.push(musicAsset);
+        const musicAsset = await generateMusicStableAudio({
+          prompt: prompts.musicPrompt,
+          durationSeconds: musicDuration,
+          outputPath: musicPath,
+        });
+        const existIdx = manifest.music.findIndex((a) => a.path === musicPath);
+        if (existIdx >= 0) manifest.music[existIdx] = musicAsset;
+        else manifest.music.push(musicAsset);
+      }
 
-      log.info(`Segment ${i} complete: image + animation + music`);
+      // Save manifest incrementally after each segment — crash-safe
+      await writeJsonFile(partialManifestPath, manifest);
+      log.info(`Segment ${i} complete: manifest saved (${manifest.images.length}i/${manifest.animations.length}a/${manifest.music.length}m)`);
     }
 
     return { manifest };
   }
 
   // ========== NARRATED: Original pipeline ==========
-  // Generate images from script cues
-  const imageCues = scriptOutput.script.map((section, i) => ({
-    id: `section-${i}`,
-    prompt: section.imageCue,
-  }));
-  const imageResults = await generateBatchImages(
-    imageCues,
-    join(outputDir, 'images'),
-    imageFramework,
-    { generatePortrait: !!hasTeaser }
-  );
-  manifest.images = imageResults.landscape;
-  if (imageResults.portrait.length > 0) {
-    manifest.portraitImages = imageResults.portrait;
+  // Load existing partial manifest if resuming after crash
+  const partialManifestPath = join(outputDir, 'asset-manifest.json');
+  if (await fileExists(partialManifestPath)) {
+    try {
+      const existing = await readJsonFile<AssetManifest>(partialManifestPath);
+      if (existing.images?.length) manifest.images = existing.images;
+      if (existing.voiceover?.length) manifest.voiceover = existing.voiceover;
+      if (existing.music?.length) manifest.music = existing.music;
+      if (existing.animations?.length) manifest.animations = existing.animations;
+      if (existing.stockFootage?.length) manifest.stockFootage = existing.stockFootage;
+      if (existing.portraitImages?.length) manifest.portraitImages = existing.portraitImages;
+      log.info('Loaded partial manifest for resume');
+    } catch { /* start fresh */ }
+  }
+
+  // Generate images from script cues (generateBatchImages already has file-skip logic)
+  if (manifest.images.length === 0) {
+    const imageCues = scriptOutput.script.map((section, i) => ({
+      id: `section-${i}`,
+      prompt: section.imageCue,
+    }));
+    const imageResults = await generateBatchImages(
+      imageCues,
+      join(outputDir, 'images'),
+      imageFramework,
+      { generatePortrait: !!hasTeaser }
+    );
+    manifest.images = imageResults.landscape;
+    if (imageResults.portrait.length > 0) {
+      manifest.portraitImages = imageResults.portrait;
+    }
+    await writeJsonFile(partialManifestPath, manifest);
+  } else {
+    log.info(`Images already exist (${manifest.images.length}), skipping`);
   }
 
   // Search Archive.org for relevant stock footage
-  try {
-    const cuesForSearch = scriptOutput.script.map((s, i) => ({
-      index: i,
-      sectionName: s.sectionName,
-      narration: s.narration,
-      imageCue: s.imageCue,
-    }));
-    const topic = scriptOutput.productionBrief?.topic ?? '';
-    const footageMatches = await findFootageForCues(cuesForSearch, topic);
+  if (!manifest.stockFootage?.length) {
+    try {
+      const cuesForSearch = scriptOutput.script.map((s, i) => ({
+        index: i,
+        sectionName: s.sectionName,
+        narration: s.narration,
+        imageCue: s.imageCue,
+      }));
+      const topic = scriptOutput.productionBrief?.topic ?? '';
+      const footageMatches = await findFootageForCues(cuesForSearch, topic);
 
-    if (footageMatches.size > 0) {
-      const stockDir = join(outputDir, 'stock-footage');
-      for (const [sectionIdx, clip] of footageMatches) {
-        try {
-          const asset = await downloadClip(clip, stockDir);
-          if (!manifest.stockFootage) {
-            manifest.stockFootage = [];
+      if (footageMatches.size > 0) {
+        const stockDir = join(outputDir, 'stock-footage');
+        for (const [sectionIdx, clip] of footageMatches) {
+          try {
+            const asset = await downloadClip(clip, stockDir);
+            if (!manifest.stockFootage) {
+              manifest.stockFootage = [];
+            }
+            manifest.stockFootage.push({
+              ...asset,
+              metadata: {
+                ...asset.metadata,
+                sectionIndex: String(sectionIdx),
+              },
+            });
+          } catch (dlErr) {
+            log.warn(`Stock footage download failed for section ${sectionIdx}: ${(dlErr as Error).message}`);
           }
-          manifest.stockFootage.push({
-            ...asset,
-            metadata: {
-              ...asset.metadata,
-              sectionIndex: String(sectionIdx),
-            },
-          });
-        } catch (dlErr) {
-          log.warn(`Stock footage download failed for section ${sectionIdx}: ${(dlErr as Error).message}`);
         }
+        log.info(`Downloaded ${manifest.stockFootage?.length ?? 0} stock footage clips`);
+        await writeJsonFile(partialManifestPath, manifest);
       }
-      log.info(`Downloaded ${manifest.stockFootage?.length ?? 0} stock footage clips`);
+    } catch (stockErr) {
+      log.warn(`Stock footage search failed (non-fatal): ${(stockErr as Error).message}`);
     }
-  } catch (stockErr) {
-    log.warn(`Stock footage search failed (non-fatal): ${(stockErr as Error).message}`);
+  } else {
+    log.info('Stock footage already downloaded, skipping');
   }
 
   // Generate single voiceover from full script
-  const fullNarration = scriptOutput.script.map((s) => s.narration).join('\n\n');
-  const voAsset = await generateVoiceover({
-    text: fullNarration,
-    voiceId: config.credentials.elevenLabsVoiceId,
-    outputPath: join(outputDir, 'voiceover', 'full-narration.mp3'),
-  });
-  manifest.voiceover = [voAsset];
+  const voPath = join(outputDir, 'voiceover', 'full-narration.mp3');
+  if (manifest.voiceover.length === 0 || !(await fileExists(voPath))) {
+    const fullNarration = scriptOutput.script.map((s) => s.narration).join('\n\n');
+    const voAsset = await generateVoiceover({
+      text: fullNarration,
+      voiceId: config.credentials.elevenLabsVoiceId,
+      outputPath: voPath,
+    });
+    manifest.voiceover = [voAsset];
+    await writeJsonFile(partialManifestPath, manifest);
+  } else {
+    log.info('Voiceover already exists, skipping');
+  }
 
-  // Generate 2-min music segment via ElevenLabs — FFmpeg loops it to fill the video
-  const musicPrompt = buildMusicPrompt(scriptOutput, musicFramework, 120);
-  const musicAsset = await generateMusicElevenLabs({
-    prompt: musicPrompt,
-    durationSeconds: 120,
-    outputPath: join(outputDir, 'music', 'background.mp3'),
-    forceInstrumental: true,
-  });
-  manifest.music = [musicAsset];
+  // Generate music via Stable Audio — prompt baked into channel config, FFmpeg loops to fill video
+  const bgMusicPath = join(outputDir, 'music', 'background.wav');
+  if (manifest.music.length === 0 || !(await fileExists(bgMusicPath))) {
+    const musicPrompt = config.musicPrompt ?? '';
+    if (!musicPrompt) {
+      log.warn('No musicPrompt in channel config — skipping music generation');
+    } else {
+      const musicAsset = await generateMusicStableAudio({
+        prompt: musicPrompt,
+        durationSeconds: 120,
+        outputPath: bgMusicPath,
+      });
+      manifest.music = [musicAsset];
+      await writeJsonFile(partialManifestPath, manifest);
+    }
+  } else {
+    log.info('Background music already exists, skipping');
+  }
 
   // Generate separate teaser VO and build teaser manifest
   let teaserManifest: AssetManifest | undefined;
@@ -593,62 +714,44 @@ async function compileVideo(
     }
   }
 
-  // Generate thumbnail via NB2 — skip for music-only channels
+  // Thumbnail generation via NBPro — skip for music-only channels
+  // Thumbnail prompt comes from @script-writer's production brief, not built mechanically
   if (format !== 'music-only') {
     const thumbnailPath = join(outputDir, 'thumbnail.png');
-    try {
-      const thumbnailFramework = await loadFramework(channelDir, config.frameworks.thumbnail);
-      const thumbnailPrompt = buildThumbnailPrompt(config, thumbnailFramework, scriptOutput);
-      const nb2Result = await generateThumbnailNB2({
-        prompt: thumbnailPrompt,
-        aspectRatio: '16:9',
-        outputPath: thumbnailPath,
-        resolution: '4K',
-      });
-      result.thumbnailPath = nb2Result.filePath;
-      log.info(`NB2 thumbnail generated: ${nb2Result.filePath}`);
-    } catch (err) {
-      log.warn(`NB2 thumbnail failed: ${(err as Error).message}. Thumbnail will be empty.`);
-      result.thumbnailPath = '';
+    const td = scriptOutput.productionBrief?.thumbnailDirection;
+    if (!td) {
+      log.warn('No thumbnailDirection in production brief — skipping thumbnail generation');
+    } else {
+      try {
+        const thumbnailFramework = await loadFramework(channelDir, config.frameworks.thumbnail);
+        const thumbnailPrompt = [
+          `## Channel Style Guide`,
+          thumbnailFramework,
+          '',
+          `## This Video`,
+          `Title: ${scriptOutput.title}`,
+          `Scene: ${td.primaryConcept}. ${td.compositionNote}`,
+          `Mood: ${td.emotionalHook}`,
+          `Text overlay: "${td.textOverlay}"`,
+        ].join('\n');
+        const nbResult = await generateThumbnailNBPro({
+          prompt: thumbnailPrompt,
+          aspectRatio: '16:9',
+          outputPath: thumbnailPath,
+          resolution: '4K',
+        });
+        result.thumbnailPath = nbResult.filePath;
+        log.info(`NBPro thumbnail generated: ${nbResult.filePath}`);
+      } catch (err) {
+        log.warn(`NBPro thumbnail failed: ${(err as Error).message}. Thumbnail will be empty.`);
+        result.thumbnailPath = '';
+      }
     }
   }
 
   return result;
 }
 
-/**
- * Build a thumbnail prompt using the channel's thumbnail framework.
- * The framework contains all channel-specific style, palette, composition, and text rules.
- */
-function buildThumbnailPrompt(
-  _config: ChannelConfig,
-  thumbnailFramework: string,
-  scriptOutput: ScriptOutput
-): string {
-  const td = scriptOutput.productionBrief?.thumbnailDirection;
-  const textOverlay = td?.textOverlay ?? scriptOutput.title.split(' ').slice(0, 3).join(' ').toUpperCase();
-  const scene = td
-    ? `${td.primaryConcept}. ${td.compositionNote}`
-    : `Cinematic scene related to "${scriptOutput.title}"`;
-  const mood = td?.emotionalHook ?? 'awe and mystery';
-
-  return [
-    `Generate a YouTube thumbnail image.`,
-    '',
-    `## Channel Style Guide (from framework)`,
-    thumbnailFramework,
-    '',
-    `## This Video`,
-    `Title: ${scriptOutput.title}`,
-    `Scene: ${scene}`,
-    `Mood: ${mood}`,
-    `Text overlay: "${textOverlay}"`,
-    '',
-    `## Requirements`,
-    `16:9 aspect ratio, 4K resolution.`,
-    `Must be clearly readable and impactful at small thumbnail size (320px width).`,
-  ].join('\n');
-}
 
 /**
  * Telegram Checkpoint 1: Send asset previews to Telegram (non-blocking).
@@ -698,296 +801,6 @@ async function sendAssetPreviewMessages(
   });
 
   return messageId;
-}
-
-/**
- * Generate title, description, tags, and hashtags for music-only channels.
- * Reads title-formula.md and description-formula.md frameworks for keyword pools,
- * patterns, scene names, hashtags, and description structure.
- * Mutates scriptOutput in place.
- */
-async function generateMusicOnlyMetadata(
-  config: ChannelConfig,
-  channelDir: string,
-  contentPlan: ContentPlan,
-  scriptOutput: ScriptOutput,
-  compilation: CompilationResult
-): Promise<void> {
-  const prompts = contentPlan.musicOnlyPrompts;
-  const segmentCount = contentPlan.segmentCount ?? 1;
-  const totalDuration = compilation.durationSeconds;
-
-  // Load frameworks and rotation state (for scene name offset)
-  const titleFramework = await loadFramework(channelDir, config.frameworks.title);
-  const descFramework = config.frameworks.description
-    ? await loadFramework(channelDir, config.frameworks.description)
-    : '';
-  const { loadRotationState } = await import('./rotation-state.js');
-  const rotationState = await loadRotationState(channelDir);
-  const sceneOffset = (rotationState.imageSlot - 1) * 3; // offset scene names by rotation slot
-
-  // Extract keyword pools from title framework
-  const genreWords = extractPoolWords(titleFramework, 'Genre Keywords');
-  const moodPoolWords = extractPoolWords(titleFramework, 'Mood Keywords');
-  const useCaseWords = extractPoolWords(titleFramework, 'Use-Case Keywords');
-  const typeWords = extractPoolWords(titleFramework, 'Type Keywords');
-  const textureWords = extractPoolWords(titleFramework, 'Texture Keywords');
-  const sceneNames = extractSceneNames(titleFramework);
-
-  // Extract title patterns from framework
-  const patterns = extractTitlePatterns(titleFramework);
-
-  // Extract keywords from prompts to match against pools
-  const imageText = (prompts?.imagePrompts ?? []).join(' ').toLowerCase();
-  const musicText = (prompts?.musicPrompt ?? '').toLowerCase();
-  const allPromptText = `${imageText} ${musicText}`;
-
-  // Match mood words from prompts
-  const matchedMoods = moodPoolWords.filter(w => allPromptText.includes(w.toLowerCase()));
-
-  // Format duration for title
-  const hours = Math.floor(totalDuration / 3600);
-  const minutes = Math.floor((totalDuration % 3600) / 60);
-  const durationStr = hours > 0
-    ? `${hours} Hour${hours > 1 ? 's' : ''}`
-    : `${minutes} Minutes`;
-
-  // --- Generate Title ---
-  const titleCandidates = buildSearchOptimizedTitles(
-    patterns, genreWords, moodPoolWords, useCaseWords, typeWords, textureWords,
-    sceneNames, matchedMoods, durationStr, hours, sceneOffset, segmentCount
-  );
-
-  // Pick title: prefer 50-70 chars, accept 40-80
-  const title = titleCandidates.find(t => t.length >= 50 && t.length <= 70)
-    ?? titleCandidates.find(t => t.length >= 40 && t.length <= 80)
-    ?? titleCandidates[0]!;
-  scriptOutput.title = title.slice(0, 80);
-  log.info(`Generated title: "${scriptOutput.title}" (${scriptOutput.title.length} chars)`);
-
-  // --- Extract description formula parts ---
-  const fixedHashtags = extractFixedHashtags(descFramework);
-  const ctaLine = extractCTALine(descFramework);
-  const fixedTags = extractFixedTags(descFramework);
-
-  // Extract mood/BPM from music prompt for tags
-  const musicPrompt = prompts?.musicPrompt ?? '';
-  const bpmMatch = musicPrompt.match(/(\d+)\s*BPM/i);
-  const bpm = bpmMatch?.[1] ?? '';
-  const durationStrLower = durationStr.toLowerCase();
-
-  // --- Generate Tags ---
-  // Combine fixed tags + genre/mood/use-case pools + prompt keywords
-  const tagParts = [
-    ...fixedTags,
-    ...genreWords.slice(0, 3).map(w => w.toLowerCase()),
-    ...matchedMoods.slice(0, 3).map(w => w.toLowerCase()),
-    ...useCaseWords.slice(0, 3).map(w => w.toLowerCase()),
-  ];
-  if (bpm) tagParts.push(`${bpm} bpm`);
-  if (hours >= 1) tagParts.push(`${hours} hour mix`, `${hours} hour ${genreWords[0]?.toLowerCase() ?? 'ambient'}`);
-
-  // Add prompt keywords not already covered
-  const promptKeywords = allPromptText.split(/[\s,]+/)
-    .map(w => w.toLowerCase().replace(/[^a-z0-9]/g, ''))
-    .filter(w => w.length > 3);
-  const uniquePromptTags = promptKeywords.filter(w => !tagParts.includes(w));
-  tagParts.push(...uniquePromptTags.slice(0, 5));
-
-  scriptOutput.tags = [...new Set(tagParts)].slice(0, 15);
-  while (scriptOutput.tags.join(', ').length > 500 && scriptOutput.tags.length > 5) {
-    scriptOutput.tags.pop();
-  }
-
-  // --- Generate Hashtags ---
-  const topicHashtags = matchedMoods.slice(0, 2).map(m => `#${m.toLowerCase()}`);
-  scriptOutput.hashtags = [...new Set([...fixedHashtags, ...topicHashtags])].slice(0, 5);
-
-  // --- Generate Description ---
-  const mood = matchedMoods[0] ?? 'atmospheric';
-  const genre = genreWords[0] ?? 'electronic';
-  const useCase = useCaseWords[Math.floor(Math.random() * Math.min(useCaseWords.length, 3))] ?? 'focus';
-
-  // One-liner: atmospheric but keyword-rich
-  const oneLiner = `${capitalize(mood)} ${genre.toLowerCase()} for ${useCase} and late-night immersion.`;
-
-  // Summary
-  const summaryParts: string[] = [];
-  if (segmentCount > 1) {
-    summaryParts.push(`${capitalize(durationStrLower)} of evolving electronic atmospheres across ${segmentCount} distinct scenes, each with its own visual world.`);
-  } else {
-    summaryParts.push(`An unbroken ${durationStrLower} of synthesizer drifts and ${bpm ? `${bpm} BPM` : 'ambient'} pulses for deep ${useCase} or late-night immersion.`);
-  }
-
-  const descParts = [oneLiner, '', summaryParts.join(' ')];
-
-  // Chapter markers (multi-segment only)
-  if (segmentCount > 1 && sceneNames.length > 0) {
-    descParts.push('');
-    const CROSSFADE = 3.0;
-    const segDuration = totalDuration / segmentCount;
-
-    for (let i = 0; i < segmentCount; i++) {
-      const offsetSec = i === 0 ? 0 : Math.round(i * segDuration - i * CROSSFADE);
-      const h = Math.floor(offsetSec / 3600);
-      const m = Math.floor((offsetSec % 3600) / 60);
-      const s = offsetSec % 60;
-      const ts = h > 0
-        ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-        : `${m}:${String(s).padStart(2, '0')}`;
-      const sceneIdx = (sceneOffset + i) % sceneNames.length;
-      const sceneName = sceneNames[sceneIdx];
-      descParts.push(`${ts} ${sceneName}`);
-    }
-  }
-
-  // CTA (hashtags appended by youtube-service at upload time)
-  descParts.push('', '---', ctaLine);
-
-  scriptOutput.description = descParts.join('\n');
-  log.info(`Generated description (${scriptOutput.description.length} chars, ${segmentCount} chapters)`);
-}
-
-// --- Title/Description framework parsing helpers ---
-
-function extractPoolWords(framework: string, sectionName: string): string[] {
-  const regex = new RegExp(`### ${sectionName}\\n([^#]+)`, 'i');
-  const match = framework.match(regex);
-  if (!match) return [];
-  return match[1]!.split(/[,\n]/).map(w => w.trim()).filter(Boolean);
-}
-
-function extractSceneNames(framework: string): string[] {
-  // Scene names are a comma-separated list on a single line containing multiple commas
-  const section = framework.match(/## Scene Name Pool[\s\S]*?\n\n([\s\S]*?)(?=\n---|\n##|$)/);
-  if (!section) return [];
-  // Find the line with the most commas — that's the scene name list
-  const lines = section[1]!.split('\n').filter(l => l.trim().length > 0);
-  const nameList = lines.reduce((best, line) =>
-    (line.split(',').length > best.split(',').length) ? line : best, '');
-  if (nameList.split(',').length < 3) return [];
-  return nameList.split(',').map(s => s.trim()).filter(Boolean);
-}
-
-function extractTitlePatterns(framework: string): string[] {
-  // Extract pattern names from the table
-  const patterns: string[] = [];
-  const tableRegex = /\|\s*(\w[\w\s]*?)\s*\|[^|]+\|[^|]+\|/g;
-  let tableMatch: RegExpExecArray | null;
-  while ((tableMatch = tableRegex.exec(framework)) !== null) {
-    const name = tableMatch[1]!.trim();
-    if (name !== 'Pattern' && name !== '-') {
-      patterns.push(name);
-    }
-  }
-  return patterns;
-}
-
-/**
- * Build search-optimized title candidates using framework keyword pools.
- * Produces keyword-rich titles with genre, mood, use-case, and duration.
- */
-function buildSearchOptimizedTitles(
-  patterns: string[],
-  genreWords: string[],
-  moodWords: string[],
-  useCaseWords: string[],
-  typeWords: string[],
-  textureWords: string[],
-  sceneNames: string[],
-  matchedMoods: string[],
-  durationStr: string,
-  hours: number,
-  sceneOffset: number,
-  segmentCount: number
-): string[] {
-  const pick = (pool: string[], exclude?: string): string => {
-    const filtered = pool.filter(w => w !== exclude);
-    return filtered[Math.floor(Math.random() * filtered.length)] ?? pool[0] ?? '';
-  };
-
-  const genre1 = pick(genreWords);
-  const genre2 = pick(genreWords, genre1);
-  const mood1 = matchedMoods[0] ?? pick(moodWords);
-  const mood2 = matchedMoods[1] ?? pick(moodWords, mood1);
-  const use1 = pick(useCaseWords);
-  const use2 = pick(useCaseWords, use1);
-  const type1 = pick(typeWords);
-  const texture1 = pick(textureWords);
-  const scene = sceneNames.length > 0
-    ? sceneNames[sceneOffset % sceneNames.length]!
-    : '';
-
-  const candidates: string[] = [];
-
-  for (const pattern of patterns) {
-    switch (pattern) {
-      case 'Use-Case Lead':
-        // "Focus Synthwave – Dark Electronic Beats for Coding"
-        candidates.push(`${capitalize(use1)} ${capitalize(genre1)} – ${capitalize(mood1)} ${capitalize(genre2)} ${capitalize(texture1)} for ${capitalize(use2)}`);
-        break;
-      case 'Genre + Mood Stack':
-        // "Dark Ambient · Atmospheric Synth for Study and Focus"
-        candidates.push(`${capitalize(genre1)} · ${capitalize(mood1)} ${capitalize(type1)} for ${capitalize(use1)} and ${capitalize(use2)}`);
-        break;
-      case 'Mood + Duration':
-        // "Melancholic Synthwave Mix – 1 Hour of Deep Beats for Work"
-        if (hours >= 1) {
-          candidates.push(`${capitalize(mood1)} ${capitalize(genre1)} ${capitalize(type1)} – ${durationStr} of ${capitalize(mood2)} ${capitalize(texture1)} for ${capitalize(use1)}`);
-        }
-        break;
-      case 'Scene + Genre':
-        // "Neon Corridor – Synthwave Beats for Late Night Coding"
-        if (scene) {
-          candidates.push(`${scene} – ${capitalize(genre1)} ${capitalize(texture1)} for ${capitalize(use1)}`);
-        }
-        break;
-      case 'Activity Double':
-        // "Synthwave for Deep Focus – Atmospheric Electronic Mix"
-        candidates.push(`${capitalize(genre1)} for ${capitalize(use1)} – ${capitalize(mood1)} ${capitalize(genre2)} ${capitalize(type1)}`);
-        break;
-      case 'Keyword Stack':
-        // "Dark Synthwave | Study · Work · Code"
-        candidates.push(`${capitalize(mood1)} ${capitalize(genre1)} | ${capitalize(use1)} · ${capitalize(use2)}`);
-        break;
-    }
-  }
-
-  // Always add some duration-aware candidates if we have hours
-  if (hours >= 1) {
-    candidates.push(`${durationStr} of ${capitalize(mood1)} ${capitalize(genre1)} for ${capitalize(use1)} and ${capitalize(use2)}`);
-    candidates.push(`${capitalize(genre1)} for ${capitalize(use1)} – ${durationStr} ${capitalize(mood1)} ${capitalize(type1)}`);
-  }
-
-  // Scene-based if multi-segment
-  if (segmentCount > 1 && scene) {
-    candidates.push(`${scene} – ${capitalize(mood1)} ${capitalize(genre1)} · ${segmentCount} Scenes for ${capitalize(use1)}`);
-  }
-
-  return [...new Set(candidates)];
-}
-
-function extractFixedHashtags(framework: string): string[] {
-  const match = framework.match(/```\n(#\w+(?:\s+#\w+)*)\n```/);
-  if (!match) return [];
-  return match[1]!.split(/\s+/).filter(h => h.startsWith('#'));
-}
-
-function extractCTALine(framework: string): string {
-  const match = framework.match(/## CTA Line[\s\S]*?```\n([\s\S]*?)\n```/);
-  return match?.[1]?.trim() ?? 'Subscribe for more. New sessions weekly.';
-}
-
-function extractFixedTags(framework: string): string[] {
-  const match = framework.match(/\*\*Fixed tags \(every video\):\*\*\n([^\n*]+)/);
-  if (!match) return [];
-  return match[1]!.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
-}
-
-
-function capitalize(word: string): string {
-  if (!word) return '';
-  return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
 /**

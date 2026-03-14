@@ -16,6 +16,7 @@
     <button class="active" data-tab="status">Status Board</button>
     <button data-tab="channels">Channels</button>
     <button data-tab="pipeline">Pipeline Monitor</button>
+    <button data-tab="ready">Ready to Publish</button>
     <button data-tab="new-channel">New Channel</button>
   </div>
 
@@ -63,28 +64,10 @@
               <!-- Music-only channel fields -->
               <div id="music-only-produce" style="display:none;">
                 <div class="form-group">
-                  <label>Category + Modifier</label>
-                  <div id="picker-selection" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                    <span id="picker-selected-text" style="color:var(--text2);font-size:13px;">None selected</span>
-                  </div>
-                  <button type="button" class="btn btn-secondary" onclick="openCategoryPicker()" style="margin-top:8px;">Browse Categories</button>
-                  <input type="hidden" id="produce-music-category" value="">
-                  <input type="hidden" id="produce-modifier" value="">
-                  <input type="hidden" id="produce-subject" value="A">
-                </div>
-                <div class="form-group">
-                  <label>Image Concept <span style="color:var(--text2);font-size:12px">(additional direction)</span></label>
-                  <input type="text" id="produce-image-concept" placeholder="e.g. Neon Tokyo rain-soaked streets" oninput="updatePromptPreview()">
-                </div>
-                <div class="form-group">
-                  <label>Music Concept <span style="color:var(--text2);font-size:12px">(override — leave blank to use category default)</span></label>
-                  <input type="text" id="produce-music-concept" placeholder="e.g. Extra reverb, deeper bass, darker tone" oninput="updatePromptPreview()">
+                  <label>Image Concept</label>
+                  <input type="text" id="produce-image-concept" placeholder="e.g. Neon Tokyo rain-soaked streets">
                 </div>
                 <div style="display:flex;gap:12px;">
-                  <div class="form-group" style="flex:1;">
-                    <label>BPM <span style="color:var(--text2);font-size:12px">(override)</span></label>
-                    <input type="number" id="produce-bpm" placeholder="from category" min="40" max="200" oninput="updatePromptPreview()">
-                  </div>
                   <div class="form-group" style="flex:1;">
                     <label>Duration (minutes)</label>
                     <input type="number" id="produce-duration" placeholder="e.g. 2, 60, 480" step="1" min="1">
@@ -94,24 +77,26 @@
                     <input type="number" id="produce-segments" placeholder="0 = seamless" min="0">
                   </div>
                 </div>
-                <!-- Prompt Preview -->
-                <div id="prompt-preview" style="display:none;">
-                  <div class="form-group">
-                    <label>Image Prompt <button type="button" class="btn-inline" onclick="togglePromptEdit('image')">edit</button></label>
-                    <div id="prompt-image-preview" class="prompt-preview-text"></div>
-                    <textarea id="prompt-image-override" class="prompt-override" style="display:none;" oninput="markOverride('image')"></textarea>
+                <!-- Metadata (title, description, tags, hashtags) -->
+                <details id="metadata-section" style="margin-top:8px;">
+                  <summary style="cursor:pointer;color:var(--text2);font-size:13px;">Metadata (title, description, tags, hashtags)</summary>
+                  <div class="form-group" style="margin-top:8px;">
+                    <label>Title <span style="color:var(--text2);font-size:12px">(leave blank for agent to generate)</span></label>
+                    <input type="text" id="produce-title" placeholder="Video title (50-70 chars ideal)">
                   </div>
                   <div class="form-group">
-                    <label>Music Prompt <button type="button" class="btn-inline" onclick="togglePromptEdit('music')">edit</button></label>
-                    <div id="prompt-music-preview" class="prompt-preview-text"></div>
-                    <textarea id="prompt-music-override" class="prompt-override" style="display:none;" oninput="markOverride('music')"></textarea>
+                    <label>Description</label>
+                    <textarea id="produce-description" rows="3" placeholder="Video description"></textarea>
                   </div>
                   <div class="form-group">
-                    <label>Animation Prompt <button type="button" class="btn-inline" onclick="togglePromptEdit('animation')">edit</button></label>
-                    <div id="prompt-animation-preview" class="prompt-preview-text"></div>
-                    <textarea id="prompt-animation-override" class="prompt-override" style="display:none;" oninput="markOverride('animation')"></textarea>
+                    <label>Tags <span style="color:var(--text2);font-size:12px">(comma-separated)</span></label>
+                    <input type="text" id="produce-tags" placeholder="e.g. synthwave, dark ambient, focus music">
                   </div>
-                </div>
+                  <div class="form-group">
+                    <label>Hashtags <span style="color:var(--text2);font-size:12px">(space-separated, include #)</span></label>
+                    <input type="text" id="produce-hashtags" placeholder="e.g. #synthwave #darkambient #focusmusic">
+                  </div>
+                </details>
               </div>
               <div class="btn-group">
                 <button class="btn btn-primary" onclick="startProduction()">Produce Now</button>
@@ -145,8 +130,15 @@
 
     <!-- Pipeline Monitor -->
     <div class="tab" id="tab-pipeline">
+      <div id="system-status" style="margin-bottom:16px;"></div>
       <div id="pipeline-list"></div>
       <div id="pipeline-empty" class="empty">No active pipelines</div>
+    </div>
+
+    <!-- Ready to Publish -->
+    <div class="tab" id="tab-ready">
+      <div id="ready-list"></div>
+      <div id="ready-empty" class="empty">No videos ready to publish</div>
     </div>
 
     <!-- New Channel -->
@@ -182,21 +174,6 @@
   </div>
 
   <!-- Category Picker Modal -->
-  <div id="category-picker-overlay" class="picker-overlay" style="display:none;" onclick="closeCategoryPicker(event)">
-    <div class="picker-modal" onclick="event.stopPropagation()">
-      <div class="picker-header">
-        <h2>Category &amp; Modifier Browser</h2>
-        <button class="picker-close" onclick="closeCategoryPicker()">&times;</button>
-      </div>
-      <div class="picker-body" id="picker-body"></div>
-      <div class="picker-footer">
-        <button class="btn btn-primary" onclick="confirmCategoryPicker()">Apply Selection</button>
-        <button class="btn btn-secondary" onclick="clearCategoryPicker()">Clear</button>
-      </div>
-    </div>
-  </div>
-
-  <script src="/js/category-data.js"></script>
   <script src="/js/app.js"></script>
 </body>
 </html>

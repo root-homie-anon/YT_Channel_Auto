@@ -12,6 +12,7 @@ export interface ChannelConfig {
     elevenLabsVoiceId: string;
   };
   frameworks: FrameworkPaths;
+  musicPrompt?: string;
   visualFilter?: string;
 }
 
@@ -175,6 +176,7 @@ export type PipelineStage =
   | 'metadata_generation'
   | 'approval'
   | 'awaiting_final_approval'
+  | 'ready'
   | 'publishing'
   | 'complete'
   | 'rejected'

@@ -15,7 +15,7 @@ Generates all written content: full scripts, production briefs, teaser scripts, 
 The production brief is generated from research findings and the finalized script. It contains per-video creative direction for all downstream agents:
 
 - **Image Direction** — primary motif, supporting motifs, visual mood, color palette, era/setting, per-section image cues
-- **Music Direction** — primary mood, supporting moods, avoid list, energy level, genre notes, arc
+- **Music Direction** — not generated; music prompt is baked into channel config
 - **Thumbnail Direction** — primary concept, emotional hook, text overlay, composition notes
 - **Title Direction** — core hook phrase, primary keyword, supporting keywords, emotional target
 

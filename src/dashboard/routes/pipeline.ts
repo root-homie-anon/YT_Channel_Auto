@@ -7,8 +7,8 @@ import { generateProductionId, readJsonFile, writeJsonFile } from '../../utils/f
 import { ensureDir } from '../../utils/file-helpers.js';
 import { runPipeline, resumePipeline } from '../../services/pipeline.js';
 import { loadRotationState } from '../../services/rotation-state.js';
-import { approveProduction, rejectProduction, listPendingApprovals } from '../../services/approval-service.js';
-import { ScriptOutput } from '../../types/index.js';
+import { approveProduction, rejectProduction, listPendingApprovals, listReadyProductions, getPendingApproval } from '../../services/approval-service.js';
+import { ScriptOutput, PipelineStatus } from '../../types/index.js';
 import { buildContentPlan } from '../content-planner.js';
 import { setupProduction, saveScriptOutput } from '../../production/produce.js';
 import {
@@ -19,6 +19,7 @@ import {
   removePipeline,
   addSseClient,
 } from '../state/pipeline-tracker.js';
+import { getConcurrencyStatus, getQueueSnapshot } from '../../services/production-queue.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..', '..', '..');
@@ -31,7 +32,16 @@ const router = Router();
 router.post('/:slug/produce', async (req: Request, res: Response) => {
   try {
     const slug = req.params.slug as string;
-    const { topic, scriptOutput, durationMinutes, segmentCount, imagePrompts, musicPrompt, animationPrompts, lastEnvironment, lastAtmosphere } = req.body;
+    const {
+      topic, scriptOutput, durationMinutes, segmentCount,
+      // Accept both singular (from dashboard UI) and plural (from agent API)
+      imagePrompts: imagePromptsArr, imagePrompt: imagePromptSingle,
+      musicPrompt: musicPromptBody,
+      animationPrompts: animationPromptsArr, animationPrompt: animationPromptSingle,
+      lastEnvironment, lastAtmosphere,
+      // Optional metadata — if provided, used instead of stub defaults
+      title: metaTitle, description: metaDescription, tags: metaTags, hashtags: metaHashtags,
+    } = req.body;
 
     if (!topic) {
       res.status(400).json({ error: 'topic is required' });
@@ -52,31 +62,41 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
     const config = await loadChannelConfig(slug);
     const isMusicOnly = config.channel.format === 'music-only';
 
-    // Music-only requires all prompt arrays from the agent
-    if (isMusicOnly) {
-      if (!imagePrompts?.length || !musicPrompt || !animationPrompts?.length) {
-        res.status(400).json({ error: 'Music-only requires imagePrompts[], musicPrompt, and animationPrompts[]' });
-        return;
-      }
-    }
+    // Normalize prompts: accept singular string or array
+    const imagePrompts: string[] = imagePromptsArr ?? (imagePromptSingle ? [imagePromptSingle] : []);
+    const animationPrompts: string[] = animationPromptsArr ?? (animationPromptSingle ? [animationPromptSingle] : []);
+    // Music prompt: request body → channel config (baked in) → empty
+    const musicPrompt: string = musicPromptBody ?? config.musicPrompt ?? '';
 
     const productionId = generateProductionId();
     const outputDir = join(PROJECT_ROOT, 'projects', slug, 'output', productionId);
     await ensureDir(outputDir);
 
-    const plan = isMusicOnly
+    // Music-only: if prompts provided, start pipeline immediately.
+    // If no prompts, create pending production for @content-strategist to build prompts from frameworks.
+    const hasPrompts = imagePrompts.length > 0 && animationPrompts.length > 0 && !!musicPrompt;
+
+    const plan = isMusicOnly && hasPrompts
       ? buildContentPlan(topic, config, { durationMinutes, segmentCount, imagePrompts, musicPrompt, animationPrompts, lastEnvironment, lastAtmosphere })
       : buildContentPlan(topic, config);
     await writeJsonFile(join(outputDir, 'content-plan.json'), plan);
 
-    // Music-only channels don't need a script — auto-start with stub
-    const resolvedScript: ScriptOutput = scriptOutput ?? (isMusicOnly ? {
-      title: topic,
-      description: topic,
-      tags: [],
-      hashtags: [],
-      script: [{ sectionName: 'main', narration: '', imageCue: topic }],
-    } : null);
+    // Resolve script output:
+    // - If scriptOutput provided directly → use it
+    // - If music-only with prompts → create stub with optional metadata
+    // - Otherwise → null (pending for agent)
+    let resolvedScript: ScriptOutput | null = null;
+    if (scriptOutput) {
+      resolvedScript = scriptOutput;
+    } else if (isMusicOnly && hasPrompts) {
+      resolvedScript = {
+        title: metaTitle ?? topic,
+        description: metaDescription ?? '',
+        tags: metaTags ?? [],
+        hashtags: metaHashtags ?? [],
+        script: [{ sectionName: 'main', narration: '', imageCue: topic, durationSeconds: 0 }],
+      };
+    }
 
     if (resolvedScript) {
       await saveScriptOutput(outputDir, resolvedScript);
@@ -131,12 +151,17 @@ router.post('/:slug/setup', async (req: Request, res: Response) => {
   }
 });
 
-// Save script output and start pipeline
+// Save script output and start pipeline for an existing production.
+// For music-only: also accepts imagePrompts, animationPrompts to build a full content plan.
 router.post('/:slug/run/:productionId', async (req: Request, res: Response) => {
   try {
     const slug = req.params.slug as string;
     const productionId = req.params.productionId as string;
-    const { scriptOutput } = req.body as { scriptOutput: ScriptOutput };
+    const {
+      scriptOutput,
+      imagePrompts, animationPrompts, musicPrompt: musicPromptBody,
+      durationMinutes, segmentCount, lastEnvironment, lastAtmosphere,
+    } = req.body;
 
     if (!scriptOutput?.title || !scriptOutput?.script?.length) {
       res.status(400).json({ error: 'scriptOutput with title and script sections is required' });
@@ -151,12 +176,21 @@ router.post('/:slug/run/:productionId', async (req: Request, res: Response) => {
     const outputDir = join(PROJECT_ROOT, 'projects', slug, 'output', productionId);
     await saveScriptOutput(outputDir, scriptOutput);
 
-    const contentPlan = await readJsonFile<{ topic: string }>(join(outputDir, 'content-plan.json'));
-
     const config = await loadChannelConfig(slug);
-    const plan = buildContentPlan(contentPlan.topic, config);
+    const isMusicOnly = config.channel.format === 'music-only';
 
-    registerPipeline(slug, productionId, contentPlan.topic);
+    // Rebuild content plan — for music-only, include prompt arrays if provided
+    const savedPlan = await readJsonFile<{ topic: string }>(join(outputDir, 'content-plan.json'));
+    const musicPrompt = musicPromptBody ?? config.musicPrompt ?? '';
+    const plan = isMusicOnly && imagePrompts?.length
+      ? buildContentPlan(savedPlan.topic, config, {
+          durationMinutes, segmentCount, imagePrompts, musicPrompt,
+          animationPrompts: animationPrompts ?? [], lastEnvironment, lastAtmosphere,
+        })
+      : buildContentPlan(savedPlan.topic, config);
+    await writeJsonFile(join(outputDir, 'content-plan.json'), plan);
+
+    registerPipeline(slug, productionId, savedPlan.topic);
     startPipelineWatcher(slug, productionId);
 
     runPipeline(slug, plan, scriptOutput, productionId)
@@ -257,22 +291,32 @@ router.post('/:slug/approve/:productionId', async (req: Request, res: Response) 
     const slug = req.params.slug as string;
     const productionId = req.params.productionId as string;
 
+    // Check checkpoint type before approving (approval clears it)
+    const pending = await getPendingApproval(slug, productionId);
+    const checkpointType = pending?.checkpointType;
+
     await approveProduction(slug, productionId);
 
-    // Resume pipeline in background
-    registerPipeline(slug, productionId, 'Resuming after approval');
-    startPipelineWatcher(slug, productionId);
+    if (checkpointType === 'asset_preview') {
+      // Asset approval → resume pipeline to compilation
+      registerPipeline(slug, productionId, 'Resuming after asset approval');
+      startPipelineWatcher(slug, productionId);
 
-    resumePipeline(slug, productionId)
-      .then((ctx) => {
-        if (ctx.publishResult) removePipeline(slug);
-      })
-      .catch((err) => {
-        console.error(`Pipeline resume failed for ${slug}:`, (err as Error).message);
-        removePipeline(slug);
-      });
+      resumePipeline(slug, productionId)
+        .then((ctx) => {
+          if (ctx.publishResult) removePipeline(slug);
+        })
+        .catch((err) => {
+          console.error(`Pipeline resume failed for ${slug}:`, (err as Error).message);
+          removePipeline(slug);
+        });
 
-    res.json({ status: 'approved', productionId, message: 'Pipeline resuming' });
+      res.json({ status: 'approved', productionId, message: 'Pipeline resuming to compilation' });
+    } else {
+      // Final approval → 'ready' — parked until scheduled
+      removePipeline(slug);
+      res.json({ status: 'ready', productionId, message: 'Video ready — schedule to publish' });
+    }
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
   }
@@ -297,6 +341,125 @@ router.get('/approvals/pending', async (_req: Request, res: Response) => {
   try {
     const pending = await listPendingApprovals();
     res.json(pending);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// === Ready & Schedule Endpoints ===
+
+// List all productions in 'ready' state (approved, not yet published)
+router.get('/ready', async (_req: Request, res: Response) => {
+  try {
+    const ready = await listReadyProductions();
+    res.json(ready);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Schedule a ready production for YouTube upload
+// Body: { scheduledTime?: ISO string, privacy?: 'private' | 'unlisted' | 'public' }
+// If scheduledTime provided: uploads as private with YouTube scheduled publish
+// If no scheduledTime: uploads immediately with given privacy (default 'public')
+router.post('/:slug/schedule/:productionId', async (req: Request, res: Response) => {
+  try {
+    const slug = req.params.slug as string;
+    const productionId = req.params.productionId as string;
+    const { scheduledTime, privacy } = req.body ?? {};
+
+    const outputDir = join(PROJECT_ROOT, 'projects', slug, 'output', productionId);
+    const status = await readJsonFile<PipelineStatus>(join(outputDir, 'pipeline-status.json'));
+
+    if (status.stage !== 'ready') {
+      res.status(400).json({ error: `Production is at stage "${status.stage}", not "ready"` });
+      return;
+    }
+
+    const scriptOutput = await readJsonFile<ScriptOutput>(join(outputDir, 'script-output.json'));
+
+    // Set publish parameters on the status file for the pipeline to use
+    const publishParams = {
+      privacy: scheduledTime ? 'private' : (privacy ?? 'public'),
+      scheduledTime: scheduledTime ? new Date(scheduledTime) : undefined,
+    };
+    await writeJsonFile(join(outputDir, 'publish-params.json'), publishParams);
+
+    // Advance to publishing and resume pipeline
+    status.stage = 'publishing';
+    status.updatedAt = new Date();
+    await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
+
+    registerPipeline(slug, productionId, `Publishing: ${scriptOutput.title}`);
+    startPipelineWatcher(slug, productionId);
+
+    resumePipeline(slug, productionId)
+      .then((ctx) => {
+        if (ctx.publishResult) removePipeline(slug);
+      })
+      .catch((err) => {
+        console.error(`Publish failed for ${slug}:`, (err as Error).message);
+        removePipeline(slug);
+      });
+
+    const msg = scheduledTime
+      ? `Scheduled for ${new Date(scheduledTime).toISOString()}`
+      : `Publishing now as ${publishParams.privacy}`;
+    res.json({ status: 'publishing', productionId, message: msg });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// === System Status ===
+router.get('/system-status', (_req: Request, res: Response) => {
+  res.json({
+    concurrency: getConcurrencyStatus(),
+    queue: getQueueSnapshot(),
+    activePipelines: getActivePipelines(),
+  });
+});
+
+// Retry a failed production — resets stage and re-queues
+router.post('/:slug/retry/:productionId', async (req: Request, res: Response) => {
+  try {
+    const slug = req.params.slug as string;
+    const productionId = req.params.productionId as string;
+
+    const outputDir = join(PROJECT_ROOT, 'projects', slug, 'output', productionId);
+    const status = await readJsonFile<PipelineStatus>(join(outputDir, 'pipeline-status.json'));
+
+    if (status.stage !== 'failed' && status.stage !== 'rejected') {
+      res.status(400).json({ error: `Cannot retry: stage is "${status.stage}", not "failed" or "rejected"` });
+      return;
+    }
+
+    if (getActivePipeline(slug)) {
+      res.status(409).json({ error: 'Pipeline already running for this channel' });
+      return;
+    }
+
+    const contentPlan = await readJsonFile<{ topic: string }>(join(outputDir, 'content-plan.json'));
+
+    // Reset status to allow resume
+    status.stage = 'asset_generation';
+    delete status.error;
+    status.updatedAt = new Date();
+    await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
+
+    registerPipeline(slug, productionId, contentPlan.topic);
+    startPipelineWatcher(slug, productionId);
+
+    resumePipeline(slug, productionId)
+      .then((ctx) => {
+        if (ctx.publishResult) removePipeline(slug);
+      })
+      .catch((err) => {
+        console.error(`Retry failed for ${slug}:`, (err as Error).message);
+        removePipeline(slug);
+      });
+
+    res.json({ status: 'retrying', productionId, message: 'Pipeline retrying — existing assets will be reused' });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

@@ -5,7 +5,7 @@ import { requireEnv } from '../utils/env.js';
 import { createLogger } from '../utils/logger.js';
 import { ApiError } from '../errors/index.js';
 
-const log = createLogger('nanobana');
+const log = createLogger('nbpro');
 
 type AspectRatio = '16:9' | '9:16';
 type Resolution = '2K' | '4K';
@@ -23,7 +23,7 @@ export interface ThumbnailResult {
   generatedAt: string;
 }
 
-// Preferred: gemini-3.1-flash-image-preview (NB2), fallback: gemini-2.5-flash-image (NB1)
+// NBPro: Gemini image generation for thumbnails
 const MODEL = process.env.GEMINI_IMAGE_MODEL ?? 'gemini-2.5-flash-image';
 
 function getClient(): GoogleGenAI {
@@ -56,7 +56,7 @@ export async function generateThumbnailNB2(
     // Extract image from response parts
     const parts = response.candidates?.[0]?.content?.parts;
     if (!parts) {
-      throw new ApiError(`No response parts returned from ${MODEL}`, 'nanobana');
+      throw new ApiError(`No response parts returned from ${MODEL}`, 'nbpro');
     }
 
     const imagePart = parts.find(
@@ -68,7 +68,7 @@ export async function generateThumbnailNB2(
       : undefined;
 
     if (!imageData) {
-      throw new ApiError(`No image data returned from ${MODEL}`, 'nanobana');
+      throw new ApiError(`No image data returned from ${MODEL}`, 'nbpro');
     }
 
     await mkdir(dirname(outputPath), { recursive: true });
@@ -87,7 +87,7 @@ export async function generateThumbnailNB2(
     if (error instanceof ApiError) throw error;
     throw new ApiError(
       `Thumbnail generation failed: ${(error as Error).message}`,
-      'nanobana'
+      'nbpro'
     );
   }
 }

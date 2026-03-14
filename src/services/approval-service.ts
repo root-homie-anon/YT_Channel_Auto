@@ -31,8 +31,8 @@ export async function approveProduction(
 
   log.info(`Production ${productionId} approved at stage ${status.stage}`);
 
-  // Clear checkpoint and mark as ready to resume
-  const resumeStage = status.stage === 'awaiting_asset_approval' ? 'compilation' : 'publishing';
+  // Clear checkpoint — asset approval resumes to compilation, final approval parks at 'ready'
+  const resumeStage = status.stage === 'awaiting_asset_approval' ? 'compilation' : 'ready';
   status.stage = resumeStage;
   delete status.checkpoint;
   status.updatedAt = new Date();
@@ -108,6 +108,63 @@ export async function listPendingApprovals(): Promise<PendingApproval[]> {
   }
 
   return pending;
+}
+
+export interface ReadyProduction {
+  channelSlug: string;
+  productionId: string;
+  title: string;
+  approvedAt: string;
+}
+
+export async function listReadyProductions(): Promise<ReadyProduction[]> {
+  const projectsDir = join(getChannelDir('_').replace('projects/_', ''), 'projects');
+  const ready: ReadyProduction[] = [];
+
+  let channelDirs: string[];
+  try {
+    channelDirs = readdirSync(projectsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && d.name.startsWith('ch-'))
+      .map((d) => d.name);
+  } catch {
+    return ready;
+  }
+
+  for (const slug of channelDirs) {
+    const outputBase = join(projectsDir, slug, 'output');
+    if (!existsSync(outputBase)) continue;
+
+    const runs = readdirSync(outputBase, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+
+    for (const run of runs) {
+      const statusPath = join(outputBase, run, 'pipeline-status.json');
+      if (!existsSync(statusPath)) continue;
+
+      try {
+        const status = await readJsonFile<PipelineStatus>(statusPath);
+        if (status.stage === 'ready') {
+          const scriptPath = join(outputBase, run, 'script-output.json');
+          let title = run;
+          try {
+            const script = await readJsonFile<{ title: string }>(scriptPath);
+            title = script.title || run;
+          } catch { /* use productionId as fallback */ }
+          ready.push({
+            channelSlug: slug,
+            productionId: run,
+            title,
+            approvedAt: status.updatedAt?.toString() ?? '',
+          });
+        }
+      } catch {
+        // Skip corrupt status files
+      }
+    }
+  }
+
+  return ready;
 }
 
 export async function getPendingApproval(

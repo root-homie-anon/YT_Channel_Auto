@@ -38,6 +38,7 @@ document.querySelectorAll('.nav button').forEach((btn) => {
     if (btn.dataset.tab === 'status') loadStatus();
     if (btn.dataset.tab === 'channels') loadChannels();
     if (btn.dataset.tab === 'pipeline') loadActivePipelines();
+    if (btn.dataset.tab === 'ready') loadReadyProductions();
   });
 });
 
@@ -197,28 +198,25 @@ async function startProduction() {
   const body = {};
 
   if (isMusicOnly) {
-    const catId = document.getElementById('produce-music-category').value;
-    if (!catId) return toast('Select a category first', 'error');
-
     const imageConcept = document.getElementById('produce-image-concept').value.trim();
-    const musicConcept = document.getElementById('produce-music-concept').value.trim();
-    const prompts = getPrompts();
-    const cat = CATEGORY_GROUPS.flatMap((g) => g.categories).find((c) => c.id === catId);
+    if (!imageConcept) return toast('Enter an image concept', 'error');
 
-    body.topic = cat ? cat.name : catId;
-    if (imageConcept) body.topic += ` | ${imageConcept}`;
-    body.imageConcept = imageConcept;
-    body.musicConcept = musicConcept;
-    body.musicCategory = catId;
-    body.universeModifier = document.getElementById('produce-modifier').value.trim() || undefined;
-    body.imagePrompt = prompts.imagePrompt;
-    body.musicPrompt = prompts.musicPrompt;
-    body.animationPrompt = prompts.animationPrompt;
+    body.topic = imageConcept;
 
     const dur = document.getElementById('produce-duration').value;
     const seg = document.getElementById('produce-segments').value;
     if (dur) body.durationMinutes = parseInt(dur, 10);
     if (seg) body.segmentCount = parseInt(seg, 10);
+
+    // Optional metadata
+    const title = document.getElementById('produce-title').value.trim();
+    const description = document.getElementById('produce-description').value.trim();
+    const tags = document.getElementById('produce-tags').value.trim();
+    const hashtags = document.getElementById('produce-hashtags').value.trim();
+    if (title) body.title = title;
+    if (description) body.description = description;
+    if (tags) body.tags = tags.split(',').map(t => t.trim()).filter(Boolean);
+    if (hashtags) body.hashtags = hashtags.split(/\s+/).filter(h => h.startsWith('#'));
   } else {
     const topic = document.getElementById('produce-topic').value.trim();
     if (!topic) return toast('Enter a topic', 'error');
@@ -234,18 +232,12 @@ async function startProduction() {
     document.getElementById('produce-topic').value = '';
     if (isMusicOnly) {
       document.getElementById('produce-image-concept').value = '';
-      document.getElementById('produce-music-concept').value = '';
-      document.getElementById('produce-bpm').value = '';
-      document.getElementById('produce-music-category').value = '';
-      document.getElementById('produce-modifier').value = '';
       document.getElementById('produce-duration').value = '';
       document.getElementById('produce-segments').value = '';
-      document.getElementById('picker-selected-text').textContent = 'None selected';
-      document.getElementById('prompt-preview').style.display = 'none';
-      promptOverrides = { image: null, music: null, animation: null };
-      pickerSelectedCategory = null;
-      pickerSelectedModifier = null;
-      pickerSelectedSubject = 'A';
+      document.getElementById('produce-title').value = '';
+      document.getElementById('produce-description').value = '';
+      document.getElementById('produce-tags').value = '';
+      document.getElementById('produce-hashtags').value = '';
     }
     if (res.status === 'pending_script') {
       toast(`Production created — waiting for @script-writer (${res.productionId})`);
@@ -354,7 +346,7 @@ async function loadHistory() {
     empty.style.display = 'none';
 
     list.innerHTML = `<table>
-      <thead><tr><th>ID</th><th>Topic</th><th>Status</th><th>Date</th></tr></thead>
+      <thead><tr><th>ID</th><th>Topic</th><th>Status</th><th>Date</th><th></th></tr></thead>
       <tbody>${runs
         .map(
           (r) => `<tr>
@@ -362,6 +354,7 @@ async function loadHistory() {
         <td>${r.topic || '-'}</td>
         <td>${badge(r.stage)}</td>
         <td style="font-size:12px">${new Date(r.startedAt).toLocaleString()}</td>
+        <td>${(r.stage === 'failed' || r.stage === 'rejected') ? `<button class="btn btn-sm btn-secondary" onclick="retryProduction('${currentChannel}', '${r.productionId}')">Retry</button>` : ''}</td>
       </tr>`
         )
         .join('')}</tbody>
@@ -383,31 +376,152 @@ async function loadActivePipelines() {
     if (pipelines.length === 0) {
       list.innerHTML = '';
       empty.style.display = 'block';
+    } else {
+      empty.style.display = 'none';
+
+      list.innerHTML = pipelines
+        .map((p) => {
+          const currentIdx = PIPELINE_STAGES.indexOf(p.stage);
+          const steps = PIPELINE_STAGES.map(
+            (s, i) =>
+              `<div class="progress-step ${i < currentIdx ? 'done' : i === currentIdx ? 'current' : ''}"></div>`
+          ).join('');
+
+          return `<div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <h3>${p.channelSlug}</h3>
+              ${badge(p.stage)}
+            </div>
+            <div style="color:var(--text2);font-size:13px;margin:4px 0">${p.topic}</div>
+            <div class="progress-bar">${steps}</div>
+            <div style="font-size:12px;color:var(--text2)">
+              Started: ${new Date(p.startedAt).toLocaleTimeString()}
+            </div>
+          </div>`;
+        })
+        .join('');
+    }
+
+    // Load system status
+    loadSystemStatus();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function loadSystemStatus() {
+  try {
+    const status = await api('/pipelines/system-status');
+    const el = document.getElementById('system-status');
+    const c = status.concurrency;
+
+    const pipelineBar = `${'●'.repeat(c.activePipelines)}${'○'.repeat(c.maxPipelines - c.activePipelines)}`;
+    const compileBar = `${'●'.repeat(c.activeCompilations)}${'○'.repeat(c.maxCompilations - c.activeCompilations)}`;
+
+    el.innerHTML = `<div class="card" style="padding:12px 16px;">
+      <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap;font-size:13px;">
+        <div><span style="color:var(--text2)">Pipeline Slots:</span> <span style="font-family:monospace">${pipelineBar}</span> ${c.activePipelines}/${c.maxPipelines}</div>
+        <div><span style="color:var(--text2)">Compile Slots:</span> <span style="font-family:monospace">${compileBar}</span> ${c.activeCompilations}/${c.maxCompilations}</div>
+        <div><span style="color:var(--text2)">Queued:</span> ${c.queueLength}</div>
+      </div>
+    </div>`;
+  } catch { /* system status is optional */ }
+}
+
+async function retryProduction(slug, productionId) {
+  try {
+    const res = await api(`/channels/${slug}/retry/${productionId}`, { method: 'POST' });
+    toast(res.message);
+    loadActivePipelines();
+    if (currentChannel) loadHistory();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+// === Ready to Publish ===
+async function loadReadyProductions() {
+  try {
+    const ready = await api('/pipelines/ready');
+    const list = document.getElementById('ready-list');
+    const empty = document.getElementById('ready-empty');
+
+    if (ready.length === 0) {
+      list.innerHTML = '';
+      empty.style.display = 'block';
       return;
     }
     empty.style.display = 'none';
 
-    list.innerHTML = pipelines
-      .map((p) => {
-        const currentIdx = PIPELINE_STAGES.indexOf(p.stage);
-        const steps = PIPELINE_STAGES.map(
-          (s, i) =>
-            `<div class="progress-step ${i < currentIdx ? 'done' : i === currentIdx ? 'current' : ''}"></div>`
-        ).join('');
-
-        return `<div class="card">
+    list.innerHTML = ready
+      .map((r) => {
+        const approved = r.approvedAt ? new Date(r.approvedAt).toLocaleString() : '-';
+        return `<div class="card" style="margin-bottom:12px;">
           <div style="display:flex;justify-content:space-between;align-items:center">
-            <h3>${p.channelSlug}</h3>
-            ${badge(p.stage)}
+            <div>
+              <h3 style="margin:0">${r.title}</h3>
+              <div style="color:var(--text2);font-size:13px;margin-top:2px">${r.channelSlug} &middot; ${r.productionId}</div>
+            </div>
+            <div style="font-size:12px;color:var(--text2)">Approved: ${approved}</div>
           </div>
-          <div style="color:var(--text2);font-size:13px;margin:4px 0">${p.topic}</div>
-          <div class="progress-bar">${steps}</div>
-          <div style="font-size:12px;color:var(--text2)">
-            Started: ${new Date(p.startedAt).toLocaleTimeString()}
+          <div style="display:flex;gap:12px;margin-top:12px;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="margin:0;flex:1;min-width:180px">
+              <label style="font-size:12px">Schedule Date/Time</label>
+              <input type="datetime-local" id="schedule-time-${r.productionId}" style="width:100%">
+            </div>
+            <div class="form-group" style="margin:0;min-width:120px">
+              <label style="font-size:12px">Privacy</label>
+              <select id="schedule-privacy-${r.productionId}" style="width:100%">
+                <option value="public">Public</option>
+                <option value="unlisted">Unlisted</option>
+                <option value="private">Private</option>
+              </select>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-primary" onclick="scheduleProduction('${r.channelSlug}', '${r.productionId}')">Schedule</button>
+              <button class="btn btn-secondary" onclick="publishNow('${r.channelSlug}', '${r.productionId}')">Publish Now</button>
+            </div>
           </div>
         </div>`;
       })
       .join('');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function scheduleProduction(slug, productionId) {
+  const timeInput = document.getElementById(`schedule-time-${productionId}`);
+  const privacySelect = document.getElementById(`schedule-privacy-${productionId}`);
+
+  if (!timeInput.value) return toast('Select a schedule date/time', 'error');
+
+  const scheduledTime = new Date(timeInput.value).toISOString();
+
+  try {
+    const res = await api(`/channels/${slug}/schedule/${productionId}`, {
+      method: 'POST',
+      body: JSON.stringify({ scheduledTime, privacy: privacySelect.value }),
+    });
+    toast(res.message);
+    loadReadyProductions();
+    loadActivePipelines();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function publishNow(slug, productionId) {
+  const privacySelect = document.getElementById(`schedule-privacy-${productionId}`);
+
+  try {
+    const res = await api(`/channels/${slug}/schedule/${productionId}`, {
+      method: 'POST',
+      body: JSON.stringify({ privacy: privacySelect.value }),
+    });
+    toast(res.message);
+    loadReadyProductions();
+    loadActivePipelines();
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -450,270 +564,6 @@ document.getElementById('new-channel-form').addEventListener('submit', async (e)
     toast(err.message, 'error');
   }
 });
-
-// === Category Picker ===
-let pickerSelectedCategory = null;
-let pickerSelectedModifier = null;
-let pickerSelectedSubject = 'A'; // 'A' or 'B'
-
-function openCategoryPicker() {
-  const overlay = document.getElementById('category-picker-overlay');
-  const body = document.getElementById('picker-body');
-
-  // Pre-select from current hidden inputs
-  const currentCat = document.getElementById('produce-music-category').value;
-  const currentMod = document.getElementById('produce-modifier').value;
-  if (currentCat) pickerSelectedCategory = currentCat;
-  if (currentMod) pickerSelectedModifier = currentMod;
-
-  body.innerHTML = CATEGORY_GROUPS.map((group) => {
-    const mods = UNIVERSE_MODIFIERS[group.id] || [];
-    return `
-      <div class="picker-group">
-        <div class="picker-group-header">
-          ${group.name}
-          <span class="picker-group-rule">${group.modifierRule}</span>
-        </div>
-        ${group.categories.map((cat) => `
-          <div class="picker-cat ${pickerSelectedCategory === cat.id ? 'selected' : ''}"
-               onclick="selectCategory('${cat.id}', '${group.id}', this)" data-group="${group.id}">
-            <div class="picker-cat-header">
-              <input type="radio" name="picker-cat" value="${cat.id}"
-                     ${pickerSelectedCategory === cat.id ? 'checked' : ''}>
-              <span class="picker-cat-name">${cat.name}</span>
-            </div>
-            <div class="picker-cat-details">
-              <div><span>Scene:</span> ${cat.scene}</div>
-              <div class="picker-subject-choice" onclick="event.stopPropagation()" style="margin:6px 0;display:flex;gap:12px;">
-                <label style="display:flex;align-items:flex-start;gap:6px;cursor:pointer;flex:1;">
-                  <input type="radio" name="subject-${cat.id}" value="A" ${pickerSelectedCategory === cat.id && pickerSelectedSubject === 'B' ? '' : 'checked'} onchange="selectSubject('A')" style="accent-color:var(--accent);margin-top:3px;">
-                  <span><strong>A:</strong> ${cat.subjectA}</span>
-                </label>
-                <label style="display:flex;align-items:flex-start;gap:6px;cursor:pointer;flex:1;">
-                  <input type="radio" name="subject-${cat.id}" value="B" ${pickerSelectedCategory === cat.id && pickerSelectedSubject === 'B' ? 'checked' : ''} onchange="selectSubject('B')" style="accent-color:var(--accent);margin-top:3px;">
-                  <span><strong>B:</strong> ${cat.subjectB}</span>
-                </label>
-              </div>
-              <div><span>Palette:</span> ${cat.palette}</div>
-              <div style="margin-top:4px;border-top:1px solid var(--border);padding-top:4px;">
-                <div><span>Music Mood:</span> ${cat.musicMood}</div>
-                <div><span>Energy:</span> ${cat.musicEnergy} &middot; <span>BPM:</span> ${cat.musicBPM}</div>
-                <div><span>Instruments:</span> ${cat.musicInstrumentation}</div>
-              </div>
-            </div>
-            ${mods.length > 0 ? `
-              <div class="picker-modifiers">
-                <div class="picker-modifiers-label">Universe Modifiers</div>
-                ${mods.map((mod) => `
-                  <label class="picker-mod" onclick="event.stopPropagation()">
-                    <input type="checkbox" value="${mod.name}"
-                           onchange="selectModifier(this, '${mod.name}')"
-                           ${pickerSelectedModifier === mod.name ? 'checked' : ''}>
-                    <div class="picker-mod-info">
-                      <div class="picker-mod-name">${mod.name}</div>
-                      <div class="picker-mod-style">${mod.artStyle}</div>
-                      <div class="picker-mod-style">${mod.envShift || ''}</div>
-                      <div class="picker-mod-colors">${mod.colorShift}</div>
-                    </div>
-                  </label>
-                `).join('')}
-              </div>
-            ` : ''}
-          </div>
-        `).join('')}
-      </div>
-    `;
-  }).join('');
-
-  overlay.style.display = 'flex';
-}
-
-function selectCategory(catId, groupId, el) {
-  // Deselect all
-  document.querySelectorAll('.picker-cat').forEach((c) => {
-    c.classList.remove('selected');
-    const radio = c.querySelector('input[type="radio"]');
-    if (radio) radio.checked = false;
-  });
-
-  // Select this one
-  el.classList.add('selected');
-  const radio = el.querySelector('input[type="radio"]');
-  if (radio) radio.checked = true;
-  pickerSelectedCategory = catId;
-
-  // Clear modifier if switching groups
-  const prevGroup = document.querySelector('.picker-cat.selected')?.dataset.group;
-  if (prevGroup !== groupId) {
-    pickerSelectedModifier = null;
-    document.querySelectorAll('.picker-mod input[type="checkbox"]').forEach((cb) => cb.checked = false);
-  }
-}
-
-function selectSubject(choice) {
-  pickerSelectedSubject = choice;
-}
-
-function selectModifier(checkbox, modName) {
-  // Only allow one modifier at a time
-  document.querySelectorAll('.picker-mod input[type="checkbox"]').forEach((cb) => {
-    if (cb !== checkbox) cb.checked = false;
-  });
-  pickerSelectedModifier = checkbox.checked ? modName : null;
-}
-
-function confirmCategoryPicker() {
-  document.getElementById('produce-music-category').value = pickerSelectedCategory || '';
-  document.getElementById('produce-modifier').value = pickerSelectedModifier || '';
-  document.getElementById('produce-subject').value = pickerSelectedSubject || 'A';
-
-  // Update display text
-  let text = '';
-  if (pickerSelectedCategory) {
-    const cat = CATEGORY_GROUPS.flatMap((g) => g.categories).find((c) => c.id === pickerSelectedCategory);
-    text = cat ? cat.name : pickerSelectedCategory;
-    text += ` (Subject ${pickerSelectedSubject})`;
-    if (pickerSelectedModifier) {
-      text += ` + ${pickerSelectedModifier}`;
-    }
-  }
-  document.getElementById('picker-selected-text').textContent = text || 'None selected';
-
-  closeCategoryPicker();
-  updatePromptPreview();
-}
-
-function clearCategoryPicker() {
-  pickerSelectedCategory = null;
-  pickerSelectedModifier = null;
-  pickerSelectedSubject = 'A';
-  document.querySelectorAll('.picker-cat').forEach((c) => {
-    c.classList.remove('selected');
-    const radio = c.querySelector('input[type="radio"]');
-    if (radio) radio.checked = false;
-  });
-  document.querySelectorAll('.picker-mod input[type="checkbox"]').forEach((cb) => cb.checked = false);
-}
-
-function closeCategoryPicker(event) {
-  if (event && event.target !== event.currentTarget) return;
-  document.getElementById('category-picker-overlay').style.display = 'none';
-}
-
-// === Prompt Preview ===
-let promptOverrides = { image: null, music: null, animation: null };
-
-function getSelectedCatAndMod() {
-  const catId = document.getElementById('produce-music-category').value;
-  const modName = document.getElementById('produce-modifier').value;
-  const subject = document.getElementById('produce-subject').value || 'A';
-  if (!catId) return { cat: null, mod: null, subject: 'A' };
-
-  const cat = CATEGORY_GROUPS.flatMap((g) => g.categories).find((c) => c.id === catId);
-  let mod = null;
-  if (modName) {
-    for (const groupMods of Object.values(UNIVERSE_MODIFIERS)) {
-      const found = groupMods.find((m) => m.name === modName);
-      if (found) { mod = found; break; }
-    }
-  }
-  return { cat, mod, subject };
-}
-
-function updatePromptPreview() {
-  const { cat, mod, subject } = getSelectedCatAndMod();
-  const preview = document.getElementById('prompt-preview');
-
-  if (!cat) {
-    preview.style.display = 'none';
-    return;
-  }
-
-  preview.style.display = 'block';
-
-  const imageConcept = document.getElementById('produce-image-concept').value.trim();
-  const musicConcept = document.getElementById('produce-music-concept').value.trim();
-  const bpmOverride = document.getElementById('produce-bpm').value.trim() || null;
-
-  const imagePrompt = buildImagePrompt(cat, mod, imageConcept, subject);
-  const musicPrompt = buildMusicPromptFromSelection(cat, musicConcept, bpmOverride);
-  const animPrompt = buildAnimationPrompt(cat, mod, imageConcept);
-
-  // Only update preview text if not overridden
-  if (!promptOverrides.image) {
-    document.getElementById('prompt-image-preview').textContent = imagePrompt;
-    document.getElementById('prompt-image-override').value = imagePrompt;
-  }
-  if (!promptOverrides.music) {
-    document.getElementById('prompt-music-preview').textContent = musicPrompt;
-    document.getElementById('prompt-music-override').value = musicPrompt;
-  }
-  if (!promptOverrides.animation) {
-    document.getElementById('prompt-animation-preview').textContent = animPrompt;
-    document.getElementById('prompt-animation-override').value = animPrompt;
-  }
-}
-
-function togglePromptEdit(type) {
-  const previewEl = document.getElementById(`prompt-${type}-preview`);
-  const overrideEl = document.getElementById(`prompt-${type}-override`);
-
-  if (overrideEl.style.display === 'none') {
-    // Switch to edit mode
-    if (!promptOverrides[type]) {
-      overrideEl.value = previewEl.textContent;
-    }
-    previewEl.style.display = 'none';
-    overrideEl.style.display = 'block';
-    overrideEl.focus();
-  } else {
-    // Switch back to preview
-    previewEl.style.display = 'block';
-    overrideEl.style.display = 'none';
-    if (promptOverrides[type]) {
-      previewEl.textContent = promptOverrides[type];
-    }
-  }
-}
-
-function markOverride(type) {
-  const overrideEl = document.getElementById(`prompt-${type}-override`);
-  const { cat, mod, subject } = getSelectedCatAndMod();
-  const imageConcept = document.getElementById('produce-image-concept').value.trim();
-  const musicConcept = document.getElementById('produce-music-concept').value.trim();
-  const bpmOverride = document.getElementById('produce-bpm').value.trim() || null;
-
-  // Check if text differs from auto-generated
-  let autoPrompt = '';
-  if (cat) {
-    if (type === 'image') autoPrompt = buildImagePrompt(cat, mod, imageConcept, subject);
-    if (type === 'music') autoPrompt = buildMusicPromptFromSelection(cat, musicConcept, bpmOverride);
-    if (type === 'animation') autoPrompt = buildAnimationPrompt(cat, mod, imageConcept);
-  }
-
-  if (overrideEl.value.trim() !== autoPrompt.trim()) {
-    promptOverrides[type] = overrideEl.value.trim();
-    overrideEl.classList.add('overridden');
-  } else {
-    promptOverrides[type] = null;
-    overrideEl.classList.remove('overridden');
-  }
-}
-
-function getPrompts() {
-  const { cat, mod, subject } = getSelectedCatAndMod();
-  const imageConcept = document.getElementById('produce-image-concept').value.trim();
-  const musicConcept = document.getElementById('produce-music-concept').value.trim();
-  const bpmOverride = document.getElementById('produce-bpm').value.trim() || null;
-
-  if (!cat) return { imagePrompt: imageConcept, musicPrompt: musicConcept, animationPrompt: imageConcept };
-
-  return {
-    imagePrompt: promptOverrides.image || buildImagePrompt(cat, mod, imageConcept, subject),
-    musicPrompt: promptOverrides.music || buildMusicPromptFromSelection(cat, musicConcept, bpmOverride),
-    animationPrompt: promptOverrides.animation || buildAnimationPrompt(cat, mod, imageConcept),
-  };
-}
 
 // === Init ===
 loadStatus();

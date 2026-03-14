@@ -38,12 +38,11 @@ Runway is Track B (music-only) only. Track A (narrated) uses Ken Burns via FFmpe
 2. Receive full script from `@script-writer` for voiceover generation
 3. Read `.claude/agents/skills/flux-image-producer.md` (Flux prompting rules)
 4. Read channel's `frameworks/image-framework.md`
-5. Read channel's `frameworks/music-framework.md`
-6. Generate all assets:
+5. Generate all assets:
    - Images via Flux API — following skill file workflow and channel framework
    - Voiceover via ElevenLabs API (using voice ID from `config.json`)
-   - Music via ElevenLabs Music API
-7. Return asset manifest with file paths to `@content-strategist`
+   - Music via Stable Audio 2.5 — prompt is baked into channel `config.json` (`musicPrompt` field), passed through unchanged
+6. Return asset manifest with file paths to `@content-strategist`
 
 ## Outputs
 - Generated image files

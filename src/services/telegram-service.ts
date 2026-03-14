@@ -28,7 +28,8 @@ export async function sendApprovalRequest(request: ApprovalRequest): Promise<num
     `<b>Title:</b> ${escapeHtml(request.videoTitle)}`,
     `<b>Preview:</b> ${request.youtubeUrl}`,
     ``,
-    `Reply with /approve or /reject`,
+    `React 👍 to approve or 👎 to reject`,
+    `<i>(or reply /approve or /reject)</i>`,
   ].join('\n');
 
   log.info(`Sending approval request for "${request.videoTitle}"`);
@@ -79,28 +80,23 @@ export async function pollForApproval(messageId: number, timeoutMinutes = 60): P
 
   while (Date.now() < deadline) {
     try {
+      const allowedUpdates = encodeURIComponent(JSON.stringify(['message', 'message_reaction']));
       const response = await fetch(
-        `${TELEGRAM_API_BASE}${botToken}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`,
+        `${TELEGRAM_API_BASE}${botToken}/getUpdates?offset=${lastUpdateId + 1}&timeout=30&allowed_updates=${allowedUpdates}`,
         { method: 'GET' }
       );
 
       if (!response.ok) continue;
 
       const data = (await response.json()) as {
-        result: Array<{
-          update_id: number;
-          message?: {
-            chat: { id: number };
-            text?: string;
-            reply_to_message?: { message_id: number };
-          };
-        }>;
+        result: Array<TelegramUpdate>;
       };
 
       for (const update of data.result) {
         lastUpdateId = update.update_id;
-        const msg = update.message;
 
+        // Check text reply (/approve or /reject)
+        const msg = update.message;
         if (
           msg &&
           String(msg.chat.id) === chatId &&
@@ -113,6 +109,24 @@ export async function pollForApproval(messageId: number, timeoutMinutes = 60): P
           }
           if (text === '/reject') {
             log.info('Video REJECTED');
+            return false;
+          }
+        }
+
+        // Check emoji reaction (👍 = approve, 👎 = reject)
+        const reaction = update.message_reaction;
+        if (
+          reaction &&
+          String(reaction.chat.id) === chatId &&
+          reaction.message_id === messageId
+        ) {
+          const emoji = getReactionEmoji(reaction.new_reaction);
+          if (emoji === '👍') {
+            log.info('Video APPROVED (reaction)');
+            return true;
+          }
+          if (emoji === '👎') {
+            log.info('Video REJECTED (reaction)');
             return false;
           }
         }
@@ -247,30 +261,25 @@ export function startTelegramApprovalListener(
 
   const poll = async (): Promise<void> => {
     try {
+      const allowedUpdates = encodeURIComponent(JSON.stringify(['message', 'message_reaction']));
       const response = await fetch(
-        `${TELEGRAM_API_BASE}${botToken}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`,
+        `${TELEGRAM_API_BASE}${botToken}/getUpdates?offset=${lastUpdateId + 1}&timeout=30&allowed_updates=${allowedUpdates}`,
         { method: 'GET' }
       );
 
       if (!response.ok) return;
 
       const data = (await response.json()) as {
-        result: Array<{
-          update_id: number;
-          message?: {
-            chat: { id: number };
-            text?: string;
-            reply_to_message?: { message_id: number };
-          };
-        }>;
+        result: Array<TelegramUpdate>;
       };
 
       const trackedIds = getTrackedMessageIds();
 
       for (const update of data.result) {
         lastUpdateId = update.update_id;
-        const msg = update.message;
 
+        // Check text reply (/approve or /reject)
+        const msg = update.message;
         if (
           msg &&
           String(msg.chat.id) === chatId &&
@@ -293,6 +302,27 @@ export function startTelegramApprovalListener(
             );
           }
         }
+
+        // Check emoji reaction (👍 = approve, 👎 = reject)
+        const reaction = update.message_reaction;
+        if (
+          reaction &&
+          String(reaction.chat.id) === chatId &&
+          trackedIds.includes(reaction.message_id)
+        ) {
+          const emoji = getReactionEmoji(reaction.new_reaction);
+          if (emoji === '👍') {
+            log.info(`Telegram approval (reaction) for message ${reaction.message_id}`);
+            await onApprove(reaction.message_id).catch((err) =>
+              log.warn(`Approval handler failed: ${(err as Error).message}`)
+            );
+          } else if (emoji === '👎') {
+            log.info(`Telegram rejection (reaction) for message ${reaction.message_id}`);
+            await onReject(reaction.message_id).catch((err) =>
+              log.warn(`Rejection handler failed: ${(err as Error).message}`)
+            );
+          }
+        }
       }
     } catch (error) {
       log.warn(`Telegram listener poll error: ${(error as Error).message}`);
@@ -307,6 +337,31 @@ export function startTelegramApprovalListener(
   };
 
   loop().catch((err) => log.warn(`Telegram listener stopped: ${(err as Error).message}`));
+}
+
+interface ReactionType {
+  type: string;
+  emoji?: string;
+}
+
+interface TelegramUpdate {
+  update_id: number;
+  message?: {
+    chat: { id: number };
+    text?: string;
+    reply_to_message?: { message_id: number };
+  };
+  message_reaction?: {
+    chat: { id: number };
+    message_id: number;
+    old_reaction: ReactionType[];
+    new_reaction: ReactionType[];
+  };
+}
+
+function getReactionEmoji(reactions: ReactionType[]): string | undefined {
+  const emoji = reactions.find((r) => r.type === 'emoji')?.emoji;
+  return emoji;
 }
 
 function escapeHtml(text: string): string {
