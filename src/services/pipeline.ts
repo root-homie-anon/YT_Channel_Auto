@@ -727,51 +727,42 @@ async function generateMusicOnlyMetadata(
   const sceneOffset = (rotationState.imageSlot - 1) * 3; // offset scene names by rotation slot
 
   // Extract keyword pools from title framework
-  const envWords = extractPoolWords(titleFramework, 'Environment Words');
-  const atmoWords = extractPoolWords(titleFramework, 'Atmosphere Words');
-  const abstractNouns = extractPoolWords(titleFramework, 'Abstract Nouns');
-  const colorWords = extractPoolWords(titleFramework, 'Color/Light Words');
+  const genreWords = extractPoolWords(titleFramework, 'Genre Keywords');
+  const moodPoolWords = extractPoolWords(titleFramework, 'Mood Keywords');
+  const useCaseWords = extractPoolWords(titleFramework, 'Use-Case Keywords');
+  const typeWords = extractPoolWords(titleFramework, 'Type Keywords');
+  const textureWords = extractPoolWords(titleFramework, 'Texture Keywords');
   const sceneNames = extractSceneNames(titleFramework);
 
   // Extract title patterns from framework
   const patterns = extractTitlePatterns(titleFramework);
 
-  // Extract keywords from image/music prompts to match against pools
+  // Extract keywords from prompts to match against pools
   const imageText = (prompts?.imagePrompts ?? []).join(' ').toLowerCase();
   const musicText = (prompts?.musicPrompt ?? '').toLowerCase();
   const allPromptText = `${imageText} ${musicText}`;
 
-  // Find matching pool words in prompts
-  const matchedEnv = envWords.filter(w => allPromptText.includes(w.toLowerCase()));
-  const matchedAtmo = atmoWords.filter(w => allPromptText.includes(w.toLowerCase()));
-  const matchedAbstract = abstractNouns.filter(w => allPromptText.includes(w.toLowerCase()));
-  const matchedColor = colorWords.filter(w => allPromptText.includes(w.toLowerCase()));
+  // Match mood words from prompts
+  const matchedMoods = moodPoolWords.filter(w => allPromptText.includes(w.toLowerCase()));
 
-  // Pick words for description/tag construction (title uses its own pool picks)
-  const envWord = matchedEnv[0] ?? envWords[Math.floor(Math.random() * envWords.length)] ?? 'Horizon';
-  const atmoWord = matchedAtmo[0] ?? atmoWords[Math.floor(Math.random() * atmoWords.length)] ?? 'Silent';
+  // Format duration for title
+  const hours = Math.floor(totalDuration / 3600);
+  const minutes = Math.floor((totalDuration % 3600) / 60);
+  const durationStr = hours > 0
+    ? `${hours} Hour${hours > 1 ? 's' : ''}`
+    : `${minutes} Minutes`;
 
   // --- Generate Title ---
-  // Determine which scene names will be used as chapters (to avoid in title)
-  const chapterSceneNames = new Set<string>();
-  if (segmentCount > 1) {
-    for (let i = 0; i < segmentCount; i++) {
-      const idx = (sceneOffset + i) % sceneNames.length;
-      chapterSceneNames.add(sceneNames[idx]!);
-    }
-  }
+  const titleCandidates = buildSearchOptimizedTitles(
+    patterns, genreWords, moodPoolWords, useCaseWords, typeWords, textureWords,
+    sceneNames, matchedMoods, durationStr, hours, sceneOffset, segmentCount
+  );
 
-  // Build candidates from framework patterns using multiple pool words
-  const titleCandidates = buildTitleCandidates(
-    patterns, envWords, atmoWords, abstractNouns, colorWords,
-    matchedEnv, matchedAtmo, matchedAbstract, matchedColor, sceneNames
-  ).filter(t => !chapterSceneNames.has(t)); // don't duplicate a chapter name as the title
-
-  // Pick title: prefer 30-50 chars, accept 15-60, hard cap 60
-  const title = titleCandidates.find(t => t.length >= 30 && t.length <= 50)
-    ?? titleCandidates.find(t => t.length >= 15 && t.length <= 60)
+  // Pick title: prefer 50-70 chars, accept 40-80
+  const title = titleCandidates.find(t => t.length >= 50 && t.length <= 70)
+    ?? titleCandidates.find(t => t.length >= 40 && t.length <= 80)
     ?? titleCandidates[0]!;
-  scriptOutput.title = title.slice(0, 60);
+  scriptOutput.title = title.slice(0, 80);
   log.info(`Generated title: "${scriptOutput.title}" (${scriptOutput.title.length} chars)`);
 
   // --- Extract description formula parts ---
@@ -779,34 +770,24 @@ async function generateMusicOnlyMetadata(
   const ctaLine = extractCTALine(descFramework);
   const fixedTags = extractFixedTags(descFramework);
 
-  // Extract mood/instrument words from music prompt for tags
+  // Extract mood/BPM from music prompt for tags
   const musicPrompt = prompts?.musicPrompt ?? '';
-  const moodWords = ['Melancholic', 'Atmospheric', 'Energetic', 'Dark', 'Ethereal',
-    'Dreamy', 'Intense', 'Calm', 'Mysterious', 'Cool', 'Ambient', 'Cinematic'];
-  const moods = moodWords.filter(m => musicPrompt.toLowerCase().includes(m.toLowerCase()));
   const bpmMatch = musicPrompt.match(/(\d+)\s*BPM/i);
   const bpm = bpmMatch?.[1] ?? '';
-
-  // Format duration
-  const hours = Math.floor(totalDuration / 3600);
-  const minutes = Math.floor((totalDuration % 3600) / 60);
-  const durationStr = hours > 0
-    ? `${hours} hour${hours > 1 ? 's' : ''}`
-    : `${minutes} minutes`;
+  const durationStrLower = durationStr.toLowerCase();
 
   // --- Generate Tags ---
+  // Combine fixed tags + genre/mood/use-case pools + prompt keywords
   const tagParts = [
     ...fixedTags,
-    ...moods.map(m => m.toLowerCase()),
-    envWord.toLowerCase(),
-    atmoWord.toLowerCase(),
+    ...genreWords.slice(0, 3).map(w => w.toLowerCase()),
+    ...matchedMoods.slice(0, 3).map(w => w.toLowerCase()),
+    ...useCaseWords.slice(0, 3).map(w => w.toLowerCase()),
   ];
   if (bpm) tagParts.push(`${bpm} bpm`);
-  // Duration bucket tag
-  if (hours >= 3) tagParts.push(`${hours} hour ambient`);
-  else if (hours >= 1) tagParts.push(`${hours} hour mix`);
+  if (hours >= 1) tagParts.push(`${hours} hour mix`, `${hours} hour ${genreWords[0]?.toLowerCase() ?? 'ambient'}`);
 
-  // Extract instrument/environment from prompts
+  // Add prompt keywords not already covered
   const promptKeywords = allPromptText.split(/[\s,]+/)
     .map(w => w.toLowerCase().replace(/[^a-z0-9]/g, ''))
     .filter(w => w.length > 3);
@@ -814,26 +795,28 @@ async function generateMusicOnlyMetadata(
   tagParts.push(...uniquePromptTags.slice(0, 5));
 
   scriptOutput.tags = [...new Set(tagParts)].slice(0, 15);
-  // Ensure total tag string under 500 chars
   while (scriptOutput.tags.join(', ').length > 500 && scriptOutput.tags.length > 5) {
     scriptOutput.tags.pop();
   }
 
   // --- Generate Hashtags ---
-  // Fixed hashtags + 2 topic-specific
-  const topicHashtags = moods.slice(0, 2).map(m => `#${m.toLowerCase()}`);
+  const topicHashtags = matchedMoods.slice(0, 2).map(m => `#${m.toLowerCase()}`);
   scriptOutput.hashtags = [...new Set([...fixedHashtags, ...topicHashtags])].slice(0, 5);
 
   // --- Generate Description ---
-  // One-liner: atmospheric scene description
-  const oneLiner = buildOneLiner(envWord, atmoWord, matchedColor, musicPrompt);
+  const mood = matchedMoods[0] ?? 'atmospheric';
+  const genre = genreWords[0] ?? 'electronic';
+  const useCase = useCaseWords[Math.floor(Math.random() * Math.min(useCaseWords.length, 3))] ?? 'focus';
 
-  // Summary: 1-2 sentences
+  // One-liner: atmospheric but keyword-rich
+  const oneLiner = `${capitalize(mood)} ${genre.toLowerCase()} for ${useCase} and late-night immersion.`;
+
+  // Summary
   const summaryParts: string[] = [];
   if (segmentCount > 1) {
-    summaryParts.push(`${capitalize(durationStr)} of evolving electronic atmospheres across ${segmentCount} distinct scenes, each with its own visual world.`);
+    summaryParts.push(`${capitalize(durationStrLower)} of evolving electronic atmospheres across ${segmentCount} distinct scenes, each with its own visual world.`);
   } else {
-    summaryParts.push(`An unbroken ${durationStr} of synthesizer drifts and ${bpm ? `${bpm} BPM` : 'ambient'} pulses for deep focus or late-night immersion.`);
+    summaryParts.push(`An unbroken ${durationStrLower} of synthesizer drifts and ${bpm ? `${bpm} BPM` : 'ambient'} pulses for deep ${useCase} or late-night immersion.`);
   }
 
   const descParts = [oneLiner, '', summaryParts.join(' ')];
@@ -901,86 +884,86 @@ function extractTitlePatterns(framework: string): string[] {
 }
 
 /**
- * Build title candidates using framework patterns and keyword pools.
- * Combines multiple pool words to produce evocative, album-track-style titles.
- * Matched words (from prompts) are preferred; random pool picks fill the rest.
+ * Build search-optimized title candidates using framework keyword pools.
+ * Produces keyword-rich titles with genre, mood, use-case, and duration.
  */
-function buildTitleCandidates(
+function buildSearchOptimizedTitles(
   patterns: string[],
-  envWords: string[],
-  atmoWords: string[],
-  abstractNouns: string[],
-  colorWords: string[],
-  matchedEnv: string[],
-  matchedAtmo: string[],
-  matchedAbstract: string[],
-  matchedColor: string[],
-  sceneNames: string[]
+  genreWords: string[],
+  moodWords: string[],
+  useCaseWords: string[],
+  typeWords: string[],
+  textureWords: string[],
+  sceneNames: string[],
+  matchedMoods: string[],
+  durationStr: string,
+  hours: number,
+  sceneOffset: number,
+  segmentCount: number
 ): string[] {
-  const pick = (matched: string[], pool: string[], exclude?: string): string => {
-    const filtered = matched.filter(w => w !== exclude);
-    if (filtered.length > 0) return filtered[Math.floor(Math.random() * filtered.length)]!;
-    const poolFiltered = pool.filter(w => w !== exclude);
-    return poolFiltered[Math.floor(Math.random() * poolFiltered.length)] ?? 'Signal';
+  const pick = (pool: string[], exclude?: string): string => {
+    const filtered = pool.filter(w => w !== exclude);
+    return filtered[Math.floor(Math.random() * filtered.length)] ?? pool[0] ?? '';
   };
 
-  const env1 = pick(matchedEnv, envWords);
-  const env2 = pick(matchedEnv, envWords, env1);
-  const atmo1 = pick(matchedAtmo, atmoWords);
-  const abs1 = pick(matchedAbstract, abstractNouns);
-  const abs2 = pick(matchedAbstract, abstractNouns, abs1);
-  const col1 = pick(matchedColor, colorWords);
+  const genre1 = pick(genreWords);
+  const genre2 = pick(genreWords, genre1);
+  const mood1 = matchedMoods[0] ?? pick(moodWords);
+  const mood2 = matchedMoods[1] ?? pick(moodWords, mood1);
+  const use1 = pick(useCaseWords);
+  const use2 = pick(useCaseWords, use1);
+  const type1 = pick(typeWords);
+  const texture1 = pick(textureWords);
+  const scene = sceneNames.length > 0
+    ? sceneNames[sceneOffset % sceneNames.length]!
+    : '';
 
   const candidates: string[] = [];
 
   for (const pattern of patterns) {
     switch (pattern) {
-      case 'Place Name':
-        // "Chrome Corridor" or "Violet Transit Level"
-        candidates.push(`${capitalize(col1)} ${capitalize(env1)}`);
-        candidates.push(`${capitalize(col1)} ${capitalize(env1)} ${capitalize(env2)}`);
+      case 'Use-Case Lead':
+        // "Focus Synthwave – Dark Electronic Beats for Coding"
+        candidates.push(`${capitalize(use1)} ${capitalize(genre1)} – ${capitalize(mood1)} ${capitalize(genre2)} ${capitalize(texture1)} for ${capitalize(use2)}`);
         break;
-      case 'State + Location':
-        // "Silent Rooftop" or "Fading Light on the Overpass"
-        candidates.push(`${capitalize(atmo1)} ${capitalize(env1)}`);
-        candidates.push(`${capitalize(atmo1)} ${capitalize(abs1)} on the ${capitalize(env1)}`);
+      case 'Genre + Mood Stack':
+        // "Dark Ambient · Atmospheric Synth for Study and Focus"
+        candidates.push(`${capitalize(genre1)} · ${capitalize(mood1)} ${capitalize(type1)} for ${capitalize(use1)} and ${capitalize(use2)}`);
         break;
-      case 'The + Abstract':
-        // "The Drift" or "The Last Frequency"
-        candidates.push(`The ${capitalize(abs1)}`);
-        candidates.push(`The ${capitalize(atmo1)} ${capitalize(abs1)}`);
+      case 'Mood + Duration':
+        // "Melancholic Synthwave Mix – 1 Hour of Deep Beats for Work"
+        if (hours >= 1) {
+          candidates.push(`${capitalize(mood1)} ${capitalize(genre1)} ${capitalize(type1)} – ${durationStr} of ${capitalize(mood2)} ${capitalize(texture1)} for ${capitalize(use1)}`);
+        }
         break;
-      case 'Compound Concept':
-        // "Chrome Horizon" or "Pulse Decay at the Edge"
-        candidates.push(`${capitalize(col1)} ${capitalize(abs1)}`);
-        candidates.push(`${capitalize(abs1)} ${capitalize(abs2)}`);
+      case 'Scene + Genre':
+        // "Neon Corridor – Synthwave Beats for Late Night Coding"
+        if (scene) {
+          candidates.push(`${scene} – ${capitalize(genre1)} ${capitalize(texture1)} for ${capitalize(use1)}`);
+        }
         break;
-      case 'Action Fragment':
-        // "Descending Through Fog" or "Drifting Past the Terminal"
-        candidates.push(`${capitalize(atmo1)} Through ${capitalize(env1)}`);
-        candidates.push(`${capitalize(atmo1)} Past the ${capitalize(env1)}`);
+      case 'Activity Double':
+        // "Synthwave for Deep Focus – Atmospheric Electronic Mix"
+        candidates.push(`${capitalize(genre1)} for ${capitalize(use1)} – ${capitalize(mood1)} ${capitalize(genre2)} ${capitalize(type1)}`);
         break;
-      case 'Single Word':
-        candidates.push(capitalize(abs1));
-        break;
-      case 'Colon Split':
-        // "Terminal: Night Shift" or "Corridor: Fading Signal"
-        candidates.push(`${capitalize(env1)}: ${capitalize(atmo1)} ${capitalize(abs1)}`);
-        candidates.push(`${capitalize(env1)}: ${capitalize(abs1)}`);
+      case 'Keyword Stack':
+        // "Dark Synthwave | Study · Work · Code"
+        candidates.push(`${capitalize(mood1)} ${capitalize(genre1)} | ${capitalize(use1)} · ${capitalize(use2)}`);
         break;
     }
   }
 
-  // Add scene name pool picks — these are pre-composed evocative names
-  if (sceneNames.length > 0) {
-    const sceneIdx = Math.floor(Math.random() * sceneNames.length);
-    candidates.push(sceneNames[sceneIdx]!);
-    // Also try a second one
-    const sceneIdx2 = (sceneIdx + 1) % sceneNames.length;
-    candidates.push(sceneNames[sceneIdx2]!);
+  // Always add some duration-aware candidates if we have hours
+  if (hours >= 1) {
+    candidates.push(`${durationStr} of ${capitalize(mood1)} ${capitalize(genre1)} for ${capitalize(use1)} and ${capitalize(use2)}`);
+    candidates.push(`${capitalize(genre1)} for ${capitalize(use1)} – ${durationStr} ${capitalize(mood1)} ${capitalize(type1)}`);
   }
 
-  // Deduplicate
+  // Scene-based if multi-segment
+  if (segmentCount > 1 && scene) {
+    candidates.push(`${scene} – ${capitalize(mood1)} ${capitalize(genre1)} · ${segmentCount} Scenes for ${capitalize(use1)}`);
+  }
+
   return [...new Set(candidates)];
 }
 
@@ -1001,22 +984,6 @@ function extractFixedTags(framework: string): string[] {
   return match[1]!.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
 }
 
-function buildOneLiner(env: string, atmo: string, colors: string[], musicPrompt: string): string {
-  const instrumentMatch = musicPrompt.match(/(synth|drum|bass|pad|arp)/i);
-  const instrument = instrumentMatch?.[1]?.toLowerCase() ?? 'synth';
-  const textureMap: Record<string, string> = {
-    synth: 'Synth pulses dissolving',
-    drum: 'Drum machines echoing',
-    bass: 'Bass frequencies humming',
-    pad: 'Lush pads drifting',
-    arp: 'Arpeggios cascading',
-  };
-  const texture = textureMap[instrument] ?? 'Synth pulses dissolving';
-  const colorWord = colors[0] ?? 'neon';
-  // Under 120 chars
-  const line = `${capitalize(atmo)} ${env} at the edge of the city. ${texture} into ${colorWord} haze.`;
-  return line.length <= 120 ? line : `${capitalize(atmo)} ${env}. ${texture} into ${colorWord} haze.`;
-}
 
 function capitalize(word: string): string {
   if (!word) return '';

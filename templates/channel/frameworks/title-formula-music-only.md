@@ -4,69 +4,68 @@
 
 ## Channel Title Identity
 
-**Title style:** {{TITLE_STYLE — e.g. "Evocative and atmospheric", "Direct and genre-forward", "Abstract and minimal"}}
-**Tone:** {{TITLE_TONE — e.g. "Cinematic and poetic", "Warm and inviting", "Cold and industrial"}}
-**Avoid:** Genre labels as the lead word, duration in title, all-caps, exclamation marks, emojis, generic mood words like "relaxing" or "chill"
-**Character target:** 30–50 characters
-**Hard cap:** 60 characters
+**Title style:** Keyword-rich and search-optimized — titles lead with genre/mood, include use-case keywords, and stack search terms separated by delimiters
+**Tone:** Atmospheric but discoverable. The brand lives in the visuals — the title works for the algorithm.
+**Character target:** 50–70 characters — long enough to stack keywords, short enough to avoid truncation
+**Hard cap:** 80 characters
 
 ---
 
 ## Title Patterns
 
-The pipeline selects from these patterns using keywords extracted from the image and music prompts.
+Each title follows one of these structures. The pipeline rotates patterns across productions.
 
 | Pattern | Structure | Example |
 |---------|-----------|---------|
-| Place Name | [Invented Location] | {{EXAMPLE_1}} |
-| State + Location | [Mood] [Environment] | {{EXAMPLE_2}} |
-| The + Abstract | The [Abstract Noun] | {{EXAMPLE_3}} |
-| Compound Concept | [Noun] + [Noun] | {{EXAMPLE_4}} |
-| Action Fragment | [Verb-ing] [Preposition] [Place] | {{EXAMPLE_5}} |
-| Single Word | [Evocative Word] | {{EXAMPLE_6}} |
-| Colon Split | [Place/Concept]: [Qualifier] | {{EXAMPLE_7}} |
+| Use-Case Lead | [Use Case] [Genre] – [Mood] [Genre2] for [Activity] | {{EXAMPLE_1}} |
+| Genre + Mood Stack | [Genre] · [Mood] [Type] for [Activity] and [Activity] | {{EXAMPLE_2}} |
+| Mood + Duration | [Mood] [Genre] [Type] – [Duration] of [Mood2] [Texture] for [Activity] | {{EXAMPLE_3}} |
+| Scene + Genre | [Scene Name] – [Genre] [Texture] for [Activity] | {{EXAMPLE_4}} |
+| Activity Double | [Genre] for [Activity] – [Mood] [Genre2] [Type] | {{EXAMPLE_5}} |
+| Keyword Stack | [Mood] [Genre] \| [Activity] · [Activity] · [Activity] | {{EXAMPLE_6}} |
 
 ---
 
 ## Keyword Pools
 
-Titles are built by combining words from these pools. Populate with words that match the channel's visual and sonic identity.
+### Genre Keywords
+{{GENRE_KEYWORDS — 8-10 genre terms that describe this channel's sound}}
 
-### Environment Words
-{{ENVIRONMENT_WORDS — 20 words that describe the visual world of this channel}}
+### Mood Keywords
+{{MOOD_KEYWORDS — 10 mood/atmosphere words fitting this channel}}
 
-### Atmosphere Words
-{{ATMOSPHERE_WORDS — 15 words that describe states/moods/movements fitting this channel}}
+### Use-Case Keywords
+{{USE_CASE_KEYWORDS — 8-10 activities listeners do while playing this channel}}
 
-### Abstract Nouns
-{{ABSTRACT_NOUNS — 20 abstract nouns that capture the channel's feeling}}
+### Type Keywords
+{{TYPE_KEYWORDS — 5-7 content type words: mix, beats, music, session, etc.}}
 
-### Color/Light Words
-{{COLOR_LIGHT_WORDS — 10 words related to the channel's visual palette}}
+### Texture Keywords
+{{TEXTURE_KEYWORDS — 5-7 sonic texture words: beats, pulses, drifts, waves, etc.}}
 
 ---
 
 ## Scene Name Pool
 
-For multi-segment videos, each segment gets a scene name for chapter markers. Populate with 20-25 evocative names that fit the channel's aesthetic:
+For multi-segment videos, each segment gets a scene name used in chapter markers. Draw from this pool sequentially, do not repeat within a single production:
 
-{{SCENE_NAMES — comma-separated list of 20-25 scene names}}
+{{SCENE_NAMES — comma-separated list of 20-25 evocative scene names}}
 
 ---
 
 ## Construction Rules
 
-- Never start with a genre name
-- Never include duration
-- Never include "mix", "compilation", "playlist", "session"
-- Prefer 2–4 word titles
-- One title per production — no candidate voting
-- Title should feel like it could be an album track name
+- Lead with the highest-value search term (genre or use-case)
+- Include at least one use-case keyword (study, focus, work, etc.)
+- Include duration when over 1 hour ("3 Hours of...", "1 Hour...")
+- Use delimiters to stack keywords: `–`, `·`, `|`
+- Never use all-caps, exclamation marks, or emojis
+- Rotate patterns across productions — don't repeat the same structure consecutively
 
 ---
 
 ## What This Formula Does NOT Do
 
 - No thumbnail pairing — music-only channels have no thumbnails
-- No production brief integration — titles derive from prompt keywords
-- No candidate voting — pipeline selects algorithmically
+- No production brief integration — titles derive from prompt keywords + framework pools
+- No candidate voting — pipeline selects algorithmically from patterns
