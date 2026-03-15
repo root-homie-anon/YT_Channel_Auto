@@ -2,12 +2,12 @@
   "channel": {
     "name": "Strange Universe",
     "slug": "ch-strange-universe",
-    "format": "long",
+    "format": "long+short",
     "niche": "UFO sightings, extraterrestrial encounters, suppressed technologies, hidden history"
   },
   "credentials": {
     "youtubeOAuthPath": "projects/ch-strange-universe/.youtube-oauth.json",
-    "elevenLabsVoiceId": ""
+    "elevenLabsVoiceId": "EiNlNiXeDU1pqqOPrYMO"
   },
   "frameworks": {
     "script": "frameworks/script-formula.md",
@@ -16,6 +16,8 @@
     "thumbnail": "frameworks/thumbnail-formula.md",
     "title": "frameworks/title-formula.md"
   },
+  "musicPrompt": "Dark atmosphere with low sustained strings, sparse piano, Sub-bass, No drums. 60–70 BPM.",
+  "skipApproval": true,
   "thumbnail": {
     "provider": "nanobana",
     "model": "gemini-3-pro-image-preview",

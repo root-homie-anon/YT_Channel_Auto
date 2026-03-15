@@ -142,6 +142,29 @@ export async function pollForApproval(messageId: number, timeoutMinutes = 60): P
   return false;
 }
 
+export async function sendTextMessage(text: string): Promise<number> {
+  const botToken = requireEnv('TELEGRAM_BOT_TOKEN');
+  const chatId = requireEnv('TELEGRAM_CHAT_ID');
+
+  const response = await fetch(`${TELEGRAM_API_BASE}${botToken}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      parse_mode: 'HTML',
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new ApiError(`Telegram API returned ${response.status}: ${errorBody}`, 'telegram', response.status);
+  }
+
+  const result = (await response.json()) as { result: TelegramMessage };
+  return result.result.message_id;
+}
+
 export async function sendPhoto(filePath: string, caption?: string): Promise<number> {
   const botToken = requireEnv('TELEGRAM_BOT_TOKEN');
   const chatId = requireEnv('TELEGRAM_CHAT_ID');

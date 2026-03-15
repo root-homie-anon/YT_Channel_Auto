@@ -62,8 +62,17 @@ Execute these phases in strict order. Save artifacts between phases for crash re
 20. Extract `hashtags[]` from Block 10 output
 21. Update `description-state.json` with what you used this time
 
+### Phase 5b — Generate Scene Names (music-only, multi-segment only)
+22. If `segmentCount > 1`:
+    - Read the Scene Name Pool in `title-formula.md`
+    - For each segment, pick a scene name that matches the environment and atmosphere used in that segment's image prompt
+    - Do not repeat a scene name within the same video
+    - Write `scene-labels.json` to the production output dir:
+      `["Rooftop Vigil", "Deep Transit", "Vertical Sprawl"]`
+    - These labels will be combined with computed timestamps after compilation
+
 ### Phase 6 — Start Pipeline
-22. POST to dashboard API `/api/channels/:slug/run/:productionId` with:
+23. POST to dashboard API `/api/channels/:slug/run/:productionId` with:
     - `scriptOutput`: title, description, tags, hashtags, script stub
     - `imagePrompts`, `animationPrompts`, `durationMinutes`, `segmentCount`
     - Music prompt comes from config — do not include in POST body

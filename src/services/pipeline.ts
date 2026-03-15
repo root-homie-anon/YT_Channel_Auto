@@ -39,7 +39,7 @@ import {
 import { generateThumbnailNBPro, loadSystemInstruction } from './nanobana-service.js';
 import { advanceRotationState } from './rotation-state.js';
 import { uploadVideo } from './youtube-service.js';
-import { sendApprovalRequest, sendVideo, sendPhoto, sendAudio } from './telegram-service.js';
+import { sendApprovalRequest, sendTextMessage, sendVideo, sendPhoto, sendAudio } from './telegram-service.js';
 import {
   waitForCompilationSlot,
   releaseCompilationSlot,
@@ -99,24 +99,28 @@ export async function runPipeline(
 
     // Stage: Asset Preview (Telegram Checkpoint 1 — non-blocking)
     if (config.channel.format === 'music-only' && context.assetManifest) {
-      await updateStage(status, 'asset_preview', outputDir);
-      log.info('Sending asset previews to Telegram for approval');
-      const messageId = await sendAssetPreviewMessages(config, context.assetManifest, contentPlan);
+      if (config.skipApproval) {
+        log.info('skipApproval enabled — skipping asset checkpoint, proceeding to compilation');
+      } else {
+        await updateStage(status, 'asset_preview', outputDir);
+        log.info('Sending asset previews to Telegram for approval');
+        const messageId = await sendAssetPreviewMessages(config, context.assetManifest, contentPlan);
 
-      // Write checkpoint and pause — pipeline resumes on approval
-      const checkpoint: CheckpointData = {
-        type: 'asset_preview',
-        channelSlug,
-        productionId,
-        telegramMessageId: messageId,
-        requestedAt: new Date().toISOString(),
-      };
-      status.stage = 'awaiting_asset_approval';
-      status.checkpoint = checkpoint;
-      status.updatedAt = new Date();
-      await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
-      log.info('Pipeline paused — awaiting asset approval (no timeout)');
-      return context;
+        // Write checkpoint and pause — pipeline resumes on approval
+        const checkpoint: CheckpointData = {
+          type: 'asset_preview',
+          channelSlug,
+          productionId,
+          telegramMessageId: messageId,
+          requestedAt: new Date().toISOString(),
+        };
+        status.stage = 'awaiting_asset_approval';
+        status.checkpoint = checkpoint;
+        status.updatedAt = new Date();
+        await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
+        log.info('Pipeline paused — awaiting asset approval (no timeout)');
+        return context;
+      }
     }
 
     // Non-music-only channels: continue straight to compilation
@@ -244,6 +248,13 @@ async function runFromCompilation(
       if (existingCompilation.videoPath && await fileExists(existingCompilation.videoPath)) {
         log.info('Compilation result already exists, skipping');
         context.compilationResult = existingCompilation;
+
+        if (config.skipApproval) {
+          log.info('skipApproval enabled — skipping final checkpoint, publishing as unlisted');
+          await writeJsonFile(join(outputDir, 'publish-params.json'), { privacy: 'unlisted' });
+          return await runFromPublishing(config, outputDir, context.compilationResult, scriptOutput, context, status);
+        }
+
         // Skip to approval
         await updateStage(status, 'approval', outputDir);
         log.info('Sending final video for approval');
@@ -327,6 +338,13 @@ async function runFromCompilation(
   // the pipeline reaches this point. For music-only channels, the @content-strategist
   // agent generates metadata using the channel's frameworks and prompt context.
   // For narrated channels, @script-writer generates all metadata.
+  if (config.skipApproval) {
+    log.info('skipApproval enabled — skipping final checkpoint, publishing as unlisted');
+    // Write publish params as unlisted
+    await writeJsonFile(join(outputDir, 'publish-params.json'), { privacy: 'unlisted' });
+    return await runFromPublishing(config, outputDir, context.compilationResult!, scriptOutput, context, status);
+  }
+
   await updateStage(status, 'approval', outputDir);
   log.info('Sending final video for approval');
   const messageId = await sendFinalApprovalMessages(config, context.compilationResult, scriptOutput);
@@ -549,10 +567,12 @@ async function generateAssets(
       if (await fileExists(musicPath) && manifest.music.some((a) => a.path === musicPath)) {
         log.info(`Segment ${i}: music already exists, skipping`);
       } else {
-        log.info(`Segment ${i}: music prompt = "${prompts.musicPrompt.slice(0, 80)}..." (${musicDuration}s)`);
+        // Always use config.musicPrompt — locked per channel, never from content plan
+        const musicPrompt = config.musicPrompt ?? prompts.musicPrompt ?? '';
+        log.info(`Segment ${i}: music prompt = "${musicPrompt.slice(0, 80)}..." (${musicDuration}s)`);
 
         const musicAsset = await generateMusicStableAudio({
-          prompt: prompts.musicPrompt,
+          prompt: musicPrompt,
           durationSeconds: musicDuration,
           outputPath: musicPath,
         });
@@ -647,16 +667,66 @@ async function generateAssets(
     log.info('Stock footage already downloaded, skipping');
   }
 
-  // Generate single voiceover from full script
+  // Generate voiceover — chunked to stay under ElevenLabs 10k char limit
   const voPath = join(outputDir, 'voiceover', 'full-narration.mp3');
   if (manifest.voiceover.length === 0 || !(await fileExists(voPath))) {
-    const fullNarration = scriptOutput.script.map((s) => s.narration).join('\n\n');
-    const voAsset = await generateVoiceover({
-      text: fullNarration,
-      voiceId: config.credentials.elevenLabsVoiceId,
-      outputPath: voPath,
-    });
-    manifest.voiceover = [voAsset];
+    const MAX_CHARS = 9500;
+    const sections = scriptOutput.script.map((s) => s.narration);
+    const chunks: string[] = [];
+    let current = '';
+    for (const section of sections) {
+      const addition = current ? '\n\n' + section : section;
+      if (current.length + addition.length > MAX_CHARS && current) {
+        chunks.push(current);
+        current = section;
+      } else {
+        current = current ? current + '\n\n' + section : section;
+      }
+    }
+    if (current) chunks.push(current);
+
+    if (chunks.length === 1) {
+      // Single chunk — generate directly to final path
+      const voAsset = await generateVoiceover({
+        text: chunks[0],
+        voiceId: config.credentials.elevenLabsVoiceId,
+        outputPath: voPath,
+      });
+      manifest.voiceover = [voAsset];
+    } else {
+      // Multiple chunks — generate parts then concatenate with FFmpeg
+      log.info(`Script is ${sections.join('\n\n').length} chars — splitting into ${chunks.length} chunks`);
+      const partPaths: string[] = [];
+      for (let i = 0; i < chunks.length; i++) {
+        const partPath = join(outputDir, 'voiceover', `part-${String(i).padStart(3, '0')}.mp3`);
+        await generateVoiceover({
+          text: chunks[i],
+          voiceId: config.credentials.elevenLabsVoiceId,
+          outputPath: partPath,
+        });
+        partPaths.push(partPath);
+      }
+      // Concatenate parts using FFmpeg concat demuxer
+      const { writeFile: writeFileRaw } = await import('fs/promises');
+      const { execFile: execFileNode } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFileNode);
+      const concatListPath = join(outputDir, 'voiceover', 'concat-list.txt');
+      const concatList = partPaths.map((p) => `file '${p}'`).join('\n');
+      await writeFileRaw(concatListPath, concatList);
+      await execFileAsync('ffmpeg', [
+        '-y', '-f', 'concat', '-safe', '0',
+        '-i', concatListPath,
+        '-c', 'copy', voPath,
+      ]);
+      log.info(`Concatenated ${chunks.length} VO chunks → ${voPath}`);
+      manifest.voiceover = [{
+        id: (await import('node:crypto')).randomUUID(),
+        path: voPath,
+        type: 'voiceover',
+        metadata: { voiceId: config.credentials.elevenLabsVoiceId, charCount: String(sections.join('\n\n').length) },
+      }];
+    }
     await writeJsonFile(partialManifestPath, manifest);
   } else {
     log.info('Voiceover already exists, skipping');
@@ -762,8 +832,8 @@ async function compileVideo(
   if (format !== 'music-only' && config.thumbnail) {
     const thumbnailPath = join(outputDir, 'thumbnail.png');
     const td = scriptOutput.productionBrief?.thumbnailDirection;
-    if (!td) {
-      log.warn('No thumbnailDirection in production brief — skipping thumbnail generation');
+    if (!td || !td.nbproPrompt) {
+      log.warn('No thumbnailDirection.nbproPrompt in production brief — skipping thumbnail generation');
     } else {
       try {
         // Load system instruction from config path
@@ -775,21 +845,9 @@ async function compileVideo(
           systemInstruction = await loadSystemInstruction(siPath);
         }
 
-        // Build prompt using thumbnail formula framework
-        const thumbnailFramework = await loadFramework(channelDir, config.frameworks.thumbnail);
-        const thumbnailPrompt = [
-          `## Channel Style Guide`,
-          thumbnailFramework,
-          '',
-          `## This Video`,
-          `Title: ${scriptOutput.title}`,
-          `Scene: ${td.primaryConcept}. ${td.compositionNote}`,
-          `Mood: ${td.emotionalHook}`,
-          `Text overlay: "${td.textOverlay}"`,
-        ].join('\n');
-
+        // Prompt is pre-built by the agent — pass through unchanged
         const nbResult = await generateThumbnailNBPro({
-          prompt: thumbnailPrompt,
+          prompt: td.nbproPrompt,
           aspectRatio: (config.thumbnail.aspectRatio as '16:9' | '9:16') ?? '16:9',
           outputPath: thumbnailPath,
           resolution: (config.thumbnail.resolution as '2K' | '4K') ?? '4K',
@@ -845,11 +903,7 @@ async function sendAssetPreviewMessages(
     `🎵 Music: ${prompts?.musicPrompt ?? 'none'}`,
     `🎞 Animation (${prompts?.animationPrompts.length ?? 0} prompts): ${prompts?.animationPrompts[0]?.slice(0, 100) ?? 'none'}`,
   ].join('\n');
-  await sendApprovalRequest({
-    videoTitle: promptSummary,
-    youtubeUrl: '',
-    channelName: config.channel.name,
-  });
+  await sendTextMessage(promptSummary);
 
   const messageId = await sendApprovalRequest({
     videoTitle: `Asset Preview — ${config.channel.name}`,

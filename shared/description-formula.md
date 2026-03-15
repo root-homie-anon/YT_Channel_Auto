@@ -325,7 +325,24 @@ Agent picks 2 randomly. Tracks last used — do not repeat same 2 consecutively.
 
 ## Block 11 — Tracklist / Timestamps
 
-**Status: TBD — to be defined when Track B pipeline is implemented and tested.**
+**Applies to:** Multi-segment music-only videos only. Skip for single-segment or narrated videos.
+
+**Source:** `compilationResult.segmentTimestamps` array from compilation-result.json.
+
+**Format:**
+```
+0:00 [Scene Name]
+3:07 [Scene Name]
+6:14 [Scene Name]
+```
+
+**Rules:**
+- First timestamp must always be `0:00` (YouTube requirement for chapters)
+- Minimum 3 chapters required for YouTube to render them (pad with segment splits if fewer)
+- Scene names come from the agent's metadata generation — default labels are `Scene 1`, `Scene 2`, etc.
+- The agent SHOULD replace default labels with evocative scene names from the title formula's Scene Name Pool or drawn from the image prompt's environment/atmosphere
+- Format timestamps as `H:MM:SS` for videos over 1 hour, `M:SS` for shorter videos
+- Place between the summary and the CTA line in the description
 
 ---
 

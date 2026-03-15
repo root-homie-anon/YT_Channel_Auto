@@ -13,6 +13,7 @@ export interface ChannelConfig {
   };
   frameworks: FrameworkPaths;
   musicPrompt?: string;
+  skipApproval?: boolean;
   visualFilter?: string;
   introOutro?: {
     introPath?: string;
@@ -97,10 +98,9 @@ export interface ProductionBrief {
     arc: string;
   };
   thumbnailDirection?: {
-    primaryConcept: string;
-    emotionalHook: string;
-    textOverlay: string;
-    compositionNote: string;
+    pillar: string;
+    flavor?: string;
+    nbproPrompt: string;
   };
   titleDirection?: {
     coreHookPhrase: string;

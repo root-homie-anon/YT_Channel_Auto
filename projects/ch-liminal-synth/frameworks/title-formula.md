@@ -188,3 +188,35 @@ RECOMMENDATION: Candidate [X] — [one sentence reason]
 ```
 
 Recommendation should favor strongest hook + best keyword coverage. Human makes the final call.
+
+---
+
+## Scene Name Pool — Chapter Markers
+
+Used for YouTube chapter markers in multi-segment videos. Each segment gets a scene name drawn from this pool based on its environment and atmosphere. The agent selects the name that best matches the image prompt's environment + atmosphere combination.
+
+**Do not repeat a scene name within the same video.**
+
+### Environment-Based Names
+| Environment | Scene Names |
+|-------------|-------------|
+| Tower blocks and skyscrapers | Skyline Descent, Vertical Sprawl, Upper Floors, The High Grid, Concrete Canopy |
+| Bridges and overpasses | Underpass, The Span, Lower Crossing, Iron Veil, Between Levels |
+| Underground tunnels and subways | Deep Transit, Below the Grid, Tunnel Run, The Sub Level, Buried Light |
+| Rooftops and elevated platforms | Rooftop Vigil, Edge of the Sky, The Outlook, Night Terrace, Above the Haze |
+
+### Atmosphere-Based Modifiers (optional — append or use standalone)
+| Condition | Modifier Names |
+|-----------|---------------|
+| Heavy fog | Through the Fog, Grey Veil, Whiteout |
+| Light rain mist | Rain Signal, Wet Neon, Mist Layer |
+| Clear cold air | Cold Open, Sharp Night, Clear Descent |
+| Smog diffusion | Amber Drift, Low Haze, Smog Line |
+| Rain-slicked dry | Mirror Floor, Wet Silence, Reflection Pool |
+
+### Naming Rules
+- 1-3 words per scene name
+- Evocative but grounded — describes a place or condition, not an emotion
+- Never use genre words (synthwave, ambient, electronic)
+- The agent picks from this pool or generates new names in the same style
+- Names should feel like locations on a map of the city

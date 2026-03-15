@@ -111,8 +111,11 @@ echo "$PENDING" | jq -c '.[]' | while read -r item; do
     echo $$ > "$SLOT_DIR/slot-${SLUG}-${PROD_ID}"
     trap 'rm -f "$SLOT_DIR/slot-${SLUG}-${PROD_ID}"' EXIT
 
-    # Spawn Claude Code to handle this production as @content-strategist
-    cd "$PROJECT_DIR" && claude -p "You are the @content-strategist agent. A pending music-only production needs processing.
+    # Detect channel format
+    CHANNEL_FORMAT=$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/projects/$SLUG/config.json'))['channel']['format'])" 2>/dev/null || echo "unknown")
+
+    if [ "$CHANNEL_FORMAT" = "music-only" ]; then
+      AGENT_PROMPT="You are the @content-strategist agent. A pending music-only production needs processing.
 
 Channel: $SLUG
 Production ID: $PROD_ID
@@ -208,7 +211,102 @@ Execute these phases IN ORDER. Do not skip steps. Save artifacts between phases 
     }
 
 Music prompt comes from config — do not include it in the POST body.
-Work autonomously. Do not ask for confirmation. Execute the full workflow." \
+Work autonomously. Do not ask for confirmation. Execute the full workflow."
+
+    else
+      # Narrated channel (long, short, long+short)
+      AGENT_PROMPT="You are the @content-strategist agent. A pending narrated production needs processing.
+
+Channel: $SLUG
+Production ID: $PROD_ID
+Topic: $TOPIC
+
+The user provided this topic as a starting point — it describes WHAT the video is about, NOT the final title.
+The final title MUST be generated using the channel's title-formula.md framework.
+
+Execute these phases IN ORDER. Do not skip steps.
+
+═══ PHASE 1 — READ CONTEXT ═══
+1. Read channel config: projects/$SLUG/config.json
+2. Read channel CLAUDE.md: projects/$SLUG/CLAUDE.md
+3. Read ALL frameworks in projects/$SLUG/frameworks/:
+   - script-formula.md
+   - image-framework.md
+   - music-framework.md
+   - thumbnail-formula.md
+   - title-formula.md
+   - teaser-formula.md (if exists)
+4. Read the shared description formula: shared/description-formula.md
+
+═══ PHASE 2 — GENERATE SCRIPT ═══
+5. Using script-formula.md, write a full narrated script for the topic: \"$TOPIC\"
+6. Structure the script as an array of sections, each with:
+   { \"sectionName\": \"<name>\", \"narration\": \"<full narration text>\", \"imageCue\": \"<visual description for this section>\", \"durationSeconds\": 0 }
+7. The script should be 15-22 minutes when read aloud at natural pace
+
+═══ PHASE 3 — GENERATE PRODUCTION BRIEF ═══
+8. Based on the script content, generate a productionBrief object:
+   {
+     \"topic\": \"$TOPIC\",
+     \"thumbnailDirection\": {
+       \"pillar\": \"<surveillance | archaeological | technical>\",
+       \"flavor\": \"<VHS | CCTV | NVG | aged photograph | blueprint — per pillar>\",
+       \"nbproPrompt\": \"<COMPLETE ready-to-send NBPro prompt — see step 8b>\"
+     },
+     \"titleDirection\": {
+       \"coreHookPhrase\": \"<strongest 3-5 word phrase from the script>\",
+       \"primaryKeyword\": \"<highest-value search term>\",
+       \"supportingKeywords\": [\"keyword2\", \"keyword3\"],
+       \"emotionalTarget\": \"<what the title should make viewer feel>\"
+     }
+   }
+
+8b. BUILD THE nbproPrompt — this is critical:
+   - Read thumbnail-formula.md — identify which pillar matches this video's content
+   - Select the correct pillar template (Surveillance / Archaeological / Technical)
+   - If Surveillance, pick the flavor (VHS / CCTV / NVG) that best fits the topic
+   - Fill in ALL template variables:
+     * [SUBJECT] — specific, grounded visual description from the script (not abstract)
+     * [FLAVOR] and [FLAVOR ARTIFACTS] — from the flavor tokens table (Surveillance only)
+     * [STAMP WORD] — from that pillar's approved word bank
+     * [2-3 CONTEXT WORDS] — lowercase curiosity hook relevant to this specific video
+   - The output must be the COMPLETE filled-in template — no placeholders, no variables
+   - Include the \"16:9 aspect ratio, 4K resolution.\" line at the end
+   - This prompt goes directly to Gemini image generation — it must stand alone
+
+═══ PHASE 4 — GENERATE TITLE ═══
+9. Read title-formula.md — generate 4-5 title candidates following the formula EXACTLY
+10. Each candidate must use a different structural pattern from the formula
+11. Each candidate must be evaluated against the thumbnail concept (pairing principle)
+12. Select the strongest candidate
+13. Write locked title to projects/$SLUG/output/$PROD_ID/locked-title.json:
+    { \"title\": \"...\", \"candidateNumber\": N, \"reason\": \"...\" }
+
+═══ PHASE 5 — GENERATE DESCRIPTION & HASHTAGS ═══
+14. Read the shared description formula or channel-specific one
+15. Generate description, tags (15-20 search terms), and hashtags following the formula
+
+═══ PHASE 6 — START PIPELINE ═══
+16. POST to $DASHBOARD_URL/api/channels/$SLUG/run/$PROD_ID with JSON body:
+    {
+      \"scriptOutput\": {
+        \"title\": \"<locked title from step 13>\",
+        \"description\": \"<generated description>\",
+        \"tags\": [...],
+        \"hashtags\": [...],
+        \"script\": [<sections from step 6>],
+        \"productionBrief\": <brief from step 8>
+      }
+    }
+
+CRITICAL RULES:
+- The topic '$TOPIC' is NOT the title. Generate the title using title-formula.md.
+- The productionBrief.thumbnailDirection is REQUIRED — without it, no thumbnail gets generated.
+- Music prompt is baked into config.json — do not generate or override it.
+- Work autonomously. Do not ask for confirmation. Execute the full workflow."
+    fi
+
+    cd "$PROJECT_DIR" && claude -p "$AGENT_PROMPT" \
     --allowedTools "Read,Glob,Grep,Bash,Agent" \
     >> "$LOG_FILE" 2>&1
 

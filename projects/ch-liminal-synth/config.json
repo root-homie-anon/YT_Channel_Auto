@@ -23,7 +23,9 @@
     "outroPath": "assets/outro.mp4",
     "crossfadeDuration": 3.0
   },
+  "musicPrompt": "electronic, Drum Machine, Bass, Lush Synthesizer Pads, Synthesizer Arp, Synth Bass, Melancholic, Vibe, Cool, Modern, Atmospheric, well-arranged composition, 115 BPM",
   "visualFilter": "synthwave",
+  "skipApproval": true,
   "toolCredits": true,
   "cta": {
     "supportLink": "",

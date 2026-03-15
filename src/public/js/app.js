@@ -236,8 +236,11 @@ async function startProduction() {
 
 // === Queue ===
 async function addToQueue() {
-  const topic = document.getElementById('produce-topic').value.trim();
-  if (!topic) return toast('Enter a topic', 'error');
+  const isMusicOnly = document.getElementById('music-only-produce').style.display !== 'none';
+  const topic = isMusicOnly
+    ? document.getElementById('produce-image-concept').value.trim()
+    : document.getElementById('produce-topic').value.trim();
+  if (!topic) return toast(isMusicOnly ? 'Enter title ideas' : 'Enter a topic', 'error');
   if (!currentChannel) return;
 
   try {
@@ -245,7 +248,11 @@ async function addToQueue() {
       method: 'POST',
       body: JSON.stringify({ topic }),
     });
-    document.getElementById('produce-topic').value = '';
+    if (isMusicOnly) {
+      document.getElementById('produce-image-concept').value = '';
+    } else {
+      document.getElementById('produce-topic').value = '';
+    }
     toast('Added to queue');
     loadQueue();
   } catch (err) {

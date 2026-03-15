@@ -6,7 +6,7 @@
 
 ## 1. Channel Visual Identity
 
-Liminal Synth exists in a permanent midnight — a vast, indifferent megacity where infrastructure dwarfs human presence and neon light bleeds into atmospheric haze. The visual world draws from Neo Tokyo, Blade Runner 2049, Ghost in the Shell 1995, Cyberpunk 2077, and Altered Carbon. Every image occupies the space between — between human and environment, between presence and absence, between now and some unspecified future that already feels like the past.
+Liminal Synth exists in a permanent midnight — a vast, indifferent megacity where infrastructure dwarfs human presence and neon light bleeds into atmospheric haze. The visual world draws from Japanese megacity anime aesthetics, desaturated sci-fi noir cinematography, rain-soaked cyberpunk urbanism, neon-dense vertical cityscapes, and dystopian stack-city architecture. Every image occupies the space between — between human and environment, between presence and absence, between now and some unspecified future that already feels like the past.
 
 The viewer is always slightly outside the scene. Never safe, never threatened — just witnessing. The city does not acknowledge the figures within it. Scale, density, and light are the primary characters. Human presence is rare, anonymous, and small.
 
@@ -30,17 +30,17 @@ True black is the permanent dark base. It never rotates. The three accent colors
 
 ## 3. Visual References
 
-These are named universes Flux recognises deeply. Include at least two per prompt — they carry lighting logic, architectural language, and atmosphere that would take 50 extra words to describe manually.
+These are aesthetic directions Flux recognises deeply. Include at least two per prompt — they carry lighting logic, architectural language, and atmosphere that would take 50 extra words to describe manually.
 
-| Reference | What it contributes |
+| Aesthetic | What it contributes |
 |-----------|-------------------|
-| Akira / Neo Tokyo | Urban decay at scale, infrastructure density, neon kanji, wet streets built for millions but feeling empty |
-| Blade Runner 2049 | Extreme negative space, colour as atmosphere, lonely figures at impossible scale, cold violet sky |
-| Ghost in the Shell 1995 | Rain-soaked city from above, architectural cross-sections, city as organism, rain diffusion through layered light |
-| Cyberpunk 2077 | Vertical density, holographic advertising, neon bleeding into everything, underground infrastructure |
-| Altered Carbon | Stack cities, perpetual night, brutalist towers wrapped in light, overpass and platform architecture |
+| Japanese megacity decay | Urban decay at scale, infrastructure density, neon kanji, wet streets built for millions but feeling empty |
+| Sci-fi noir negative space | Extreme negative space, colour as atmosphere, lonely figures at impossible scale, cold violet sky |
+| Rain-soaked cyberpunk urbanism | Rain-soaked city from above, architectural cross-sections, city as organism, rain diffusion through layered light |
+| Neon-dense vertical cityscape | Vertical density, holographic advertising, neon bleeding into everything, underground infrastructure |
+| Dystopian stack-city architecture | Stack cities, perpetual night, brutalist towers wrapped in light, overpass and platform architecture |
 
-**Usage rule:** Always pair references intentionally. Lead with the reference that contributes the *environment*, follow with the one that contributes the *atmosphere or lighting quality*.
+**Usage rule:** Always pair aesthetics intentionally. Lead with the one that contributes the *environment*, follow with the one that contributes the *atmosphere or lighting quality*.
 
 ---
 
@@ -123,25 +123,25 @@ The agent follows this table sequentially. Each new image with a subject advance
 
 ### With subject (photorealistic)
 ```
-Photorealistic [SUBJECT] [ORIENTATION] [CAMERA PERSPECTIVE], [SCALE in frame], 
-[REFERENCE 1] environment, [REFERENCE 2] [atmosphere/lighting quality], 
-[ATMOSPHERE COLOR role hex] atmospheric [condition], 
-[PRIMARY LIGHT COLOR role hex] [light source and surface], 
-[SIGNAGE COLOR role hex] [signage/holographic detail], 
-true black shadows and base #000000, 
-shot on Sony A7R IV [LENS from rotation slot], fine grain, slight underexposure, 
+Photorealistic [SUBJECT] [ORIENTATION] [CAMERA PERSPECTIVE], [SCALE in frame],
+[AESTHETIC 1] environment, [AESTHETIC 2] [atmosphere/lighting quality],
+[ATMOSPHERE COLOR role hex] atmospheric [condition],
+[PRIMARY LIGHT COLOR role hex] [light source and surface],
+[SIGNAGE COLOR role hex] [signage/holographic detail],
+true black shadows and base #000000,
+shot on Sony A7R IV [LENS from rotation slot], fine grain, slight underexposure,
 [ATMOSPHERE CONDITION from section 6], [mood close], cinematic 2.39:1
 ```
 
 ### Without subject (concept art)
 ```
-Concept art architectural illustration of [ENVIRONMENT] at midnight, 
-[REFERENCE 1] aesthetic, [REFERENCE 2] [composition quality], 
-[ATMOSPHERE COLOR role hex] atmospheric [condition], 
-[PRIMARY LIGHT COLOR role hex] [light source and surface], 
-[SIGNAGE COLOR role hex] [signage/holographic detail], 
-true black sky and ground #000000, 
-clean precise linework, architectural illustration quality, matte surface finish, 
+Concept art architectural illustration of [ENVIRONMENT] at midnight,
+[AESTHETIC 1] aesthetic, [AESTHETIC 2] [composition quality],
+[ATMOSPHERE COLOR role hex] atmospheric [condition],
+[PRIMARY LIGHT COLOR role hex] [light source and surface],
+[SIGNAGE COLOR role hex] [signage/holographic detail],
+true black sky and ground #000000,
+clean precise linework, architectural illustration quality, matte surface finish,
 [ATMOSPHERE CONDITION from section 6], [mood close], cinematic 2.39:1
 ```
 
@@ -151,35 +151,35 @@ clean precise linework, architectural illustration quality, matte surface finish
 
 ### Example A — Slot 1, Rooftop, with subject
 ```
-Photorealistic hooded figure standing at the edge of a Blade Runner 2049 megacity rooftop 
-at midnight, positioned left third of frame back to camera, right two thirds open city 
-dropping away into Akira Neo Tokyo tower density below, violet atmospheric haze filling 
-the city depth #3D1566, cyan rooftop edge and infrastructure lighting #00F0FF, magenta 
-holographic signage cascading down towers in the distance #FF2D9B, true black sky #000000, 
-shot on Sony A7R IV 35mm f/1.8, fine grain, slight underexposure, light rain mist, 
+Photorealistic hooded figure standing at the edge of a sci-fi noir megacity rooftop
+at midnight, positioned left third of frame back to camera, right two thirds open city
+dropping away into Japanese megacity decay tower density below, violet atmospheric haze filling
+the city depth #3D1566, cyan rooftop edge and infrastructure lighting #00F0FF, magenta
+holographic signage cascading down towers in the distance #FF2D9B, true black sky #000000,
+shot on Sony A7R IV 35mm f/1.8, fine grain, slight underexposure, light rain mist,
 figure 12% of frame, cinematic 2.39:1
 ```
 
 ### Example B — Environment only, Tower Blocks, concept art
 ```
-Concept art architectural illustration of a Neo Tokyo megacity canyon at midnight, 
-Ghost in the Shell 1995 aesthetic, dense vertical towers with Blade Runner 2049 negative 
-space composition, violet atmospheric haze filling the city depth #3D1566, cyan holographic 
-advertising bleeding into low fog #00F0FF, magenta kanji signage cascading down tower 
-faces #FF2D9B, true black sky and ground #000000, clean precise linework, architectural 
-illustration quality, matte surface finish, heavy fog, city as living organism, 
+Concept art architectural illustration of a Japanese megacity canyon at midnight,
+rain-soaked cyberpunk urbanism aesthetic, dense vertical towers with sci-fi noir negative
+space composition, violet atmospheric haze filling the city depth #3D1566, cyan holographic
+advertising bleeding into low fog #00F0FF, magenta kanji signage cascading down tower
+faces #FF2D9B, true black sky and ground #000000, clean precise linework, architectural
+illustration quality, matte surface finish, heavy fog, city as living organism,
 silent and immense, cinematic 2.39:1
 ```
 
 ### Example C — Slot 3, Bridge, with subject (facing camera close up)
 ```
-Photorealistic hooded figure facing camera in extreme foreground, face partially obscured 
-by hood casting deep shadow, Ghost in the Shell 1995 rain mist on skin and jacket surface, 
-Altered Carbon stack-city overpass infrastructure filling the background compressed behind 
-the figure, magenta atmospheric haze in the city depth #FF2D9B, violet bridge structural 
-lighting behind the figure #3D1566, cyan neon signage bleeding in from the edges #00F0FF, 
-true black shadows on face and hood #000000, shot on Sony A7R IV 85mm f/1.4, shallow 
-depth of field, city background softly compressed, rain-slicked dry, intimate and 
+Photorealistic hooded figure facing camera in extreme foreground, face partially obscured
+by hood casting deep shadow, rain-soaked cyberpunk urbanism rain mist on skin and jacket surface,
+dystopian stack-city overpass infrastructure filling the background compressed behind
+the figure, magenta atmospheric haze in the city depth #FF2D9B, violet bridge structural
+lighting behind the figure #3D1566, cyan neon signage bleeding in from the edges #00F0FF,
+true black shadows on face and hood #000000, shot on Sony A7R IV 85mm f/1.4, shallow
+depth of field, city background softly compressed, rain-slicked dry, intimate and
 unknowable, cinematic 2.39:1
 ```
 
@@ -194,7 +194,7 @@ Before approving any generated image for the video set:
 - [ ] Correct color rotation slot applied — three accent colors in correct roles
 - [ ] Rendering style matches the rule — photorealistic with subject, concept art without
 - [ ] Correct camera perspective and lens for the rotation slot
-- [ ] At least two named visual universe references visible in the output
+- [ ] At least two aesthetic direction references visible in the output
 - [ ] No warm tones, no golden hour, no identifiable faces
 - [ ] Atmosphere condition does not repeat from the previous image
 - [ ] Image could belong in the same visual universe as every other image in the set
