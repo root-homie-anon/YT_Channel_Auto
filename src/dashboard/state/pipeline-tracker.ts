@@ -14,6 +14,8 @@ export interface ActivePipeline {
   stage: PipelineStage;
   startedAt: Date;
   updatedAt: Date;
+  error?: string;
+  failedAtStage?: string;
 }
 
 const activePipelines = new Map<string, ActivePipeline>();
@@ -30,13 +32,14 @@ export function getActivePipeline(channelSlug: string): ActivePipeline | undefin
 export function registerPipeline(
   channelSlug: string,
   productionId: string,
-  topic: string
+  topic: string,
+  initialStage: PipelineStage = 'planning'
 ): void {
   const pipeline: ActivePipeline = {
     channelSlug,
     productionId,
     topic,
-    stage: 'planning',
+    stage: initialStage,
     startedAt: new Date(),
     updatedAt: new Date(),
   };
@@ -83,15 +86,22 @@ export function startPipelineWatcher(channelSlug: string, productionId: string):
 
     if (await fileExists(statusPath)) {
       const status = await readJsonFile<PipelineStatus>(statusPath);
-      if (status.stage !== pipeline.stage) {
+      const stageChanged = status.stage !== pipeline.stage;
+      const errorChanged = status.error !== pipeline.error;
+
+      if (stageChanged || errorChanged) {
         pipeline.stage = status.stage;
         pipeline.updatedAt = new Date();
+        if (status.error) { pipeline.error = status.error; } else { delete pipeline.error; }
+        if (status.failedAtStage) { pipeline.failedAtStage = status.failedAtStage; } else { delete pipeline.failedAtStage; }
         broadcast({
           type: 'stage_change',
           data: {
             channelSlug,
             productionId,
             stage: status.stage,
+            error: status.error,
+            failedAtStage: status.failedAtStage,
             updatedAt: pipeline.updatedAt,
           },
         });

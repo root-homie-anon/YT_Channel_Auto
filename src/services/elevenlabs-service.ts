@@ -7,6 +7,7 @@ import { AssetFile } from '../types/index.js';
 import { requireEnv } from '../utils/env.js';
 import { ensureDir } from '../utils/file-helpers.js';
 import { createLogger } from '../utils/logger.js';
+import { withRetry } from '../utils/retry.js';
 
 const log = createLogger('elevenlabs-service');
 
@@ -39,37 +40,40 @@ export async function generateVoiceover(options: VoiceoverOptions): Promise<Asse
   await ensureDir(join(outputPath, '..'));
 
   try {
-    const response = await fetch(
-      `${ELEVENLABS_API_BASE}/text-to-speech/${voiceId}`,
-      {
-        method: 'POST',
-        headers: {
-          'xi-api-key': apiKey,
-          'Content-Type': 'application/json',
-          'Accept': 'audio/mpeg',
-        },
-        body: JSON.stringify({
-          text,
-          model_id: modelId,
-          voice_settings: {
-            stability,
-            similarity_boost: similarityBoost,
-            speed,
+    const audioBuffer = await withRetry('elevenlabs-tts', async () => {
+      const response = await fetch(
+        `${ELEVENLABS_API_BASE}/text-to-speech/${voiceId}`,
+        {
+          method: 'POST',
+          headers: {
+            'xi-api-key': apiKey,
+            'Content-Type': 'application/json',
+            'Accept': 'audio/mpeg',
           },
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new ApiError(
-        `ElevenLabs API returned ${response.status}: ${errorBody}`,
-        'elevenlabs',
-        response.status
+          body: JSON.stringify({
+            text,
+            model_id: modelId,
+            voice_settings: {
+              stability,
+              similarity_boost: similarityBoost,
+              speed,
+            },
+          }),
+        }
       );
-    }
 
-    const audioBuffer = Buffer.from(await response.arrayBuffer());
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new ApiError(
+          `ElevenLabs API returned ${response.status}: ${errorBody}`,
+          'elevenlabs',
+          response.status
+        );
+      }
+
+      return Buffer.from(await response.arrayBuffer());
+    });
+
     await writeFile(outputPath, audioBuffer);
 
     log.info(`Voiceover saved: ${outputPath}`);

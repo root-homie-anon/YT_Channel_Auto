@@ -7,6 +7,7 @@ import { AssetFile } from '../types/index.js';
 import { requireEnv } from '../utils/env.js';
 import { ensureDir } from '../utils/file-helpers.js';
 import { createLogger } from '../utils/logger.js';
+import { withRetry } from '../utils/retry.js';
 
 const log = createLogger('flux-service');
 
@@ -27,31 +28,33 @@ export async function generateImage(options: FluxGenerateOptions): Promise<Asset
   await ensureDir(join(outputPath, '..'));
 
   try {
-    // Step 1: Submit generation request
-    const submitResponse = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'x-key': apiKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        prompt,
-        width,
-        height,
-        output_format: 'png',
-      }),
+    // Step 1: Submit generation request (with retry for transient errors)
+    const submitResult = await withRetry('flux-submit', async () => {
+      const submitResponse = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'x-key': apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prompt,
+          width,
+          height,
+          output_format: 'png',
+        }),
+      });
+
+      if (!submitResponse.ok) {
+        const errorBody = await submitResponse.text();
+        throw new ApiError(
+          `BFL API returned ${submitResponse.status}: ${errorBody}`,
+          'flux',
+          submitResponse.status
+        );
+      }
+
+      return (await submitResponse.json()) as { id: string; polling_url: string };
     });
-
-    if (!submitResponse.ok) {
-      const errorBody = await submitResponse.text();
-      throw new ApiError(
-        `BFL API returned ${submitResponse.status}: ${errorBody}`,
-        'flux',
-        submitResponse.status
-      );
-    }
-
-    const submitResult = (await submitResponse.json()) as { id: string; polling_url: string };
     log.info(`Image generation submitted, task: ${submitResult.id}`);
 
     // Step 2: Poll for completion
@@ -121,25 +124,28 @@ async function pollForResult(pollingUrl: string): Promise<string> {
   throw new ApiError('BFL image generation timed out after 5 minutes', 'flux');
 }
 
+// ---------------------------------------------------------------------------
+// Style tag extraction — appended to grounded prompts for visual consistency
+// ---------------------------------------------------------------------------
+
+/** Compact style anchor — appended to every grounded prompt */
+const DEFAULT_STYLE_TAG = 'Mike Mignola Hellboy style, heavy black ink shadows, bold flat shapes, high-contrast, graphic novel panel, no faces, no text';
+
 /**
  * Extract the style tag from the image framework's Flux Prompt Construction
- * Template section. Falls back to the **Style:** line if the template block
- * isn't found. The style tag is appended to every image cue to enforce
- * visual consistency.
+ * Template section. Falls back to the **Style:** line, then DEFAULT_STYLE_TAG.
  */
-function extractStyleTag(imageFramework: string): string {
-  // Look for the code block in the Flux Prompt Construction Template
-  const templateMatch = imageFramework.match(/```\n\[subject.*?\],\s*(.+?)\n```/s);
+export function extractStyleTag(imageFramework: string): string {
+  const templateMatch = imageFramework.match(new RegExp('```\\n\\[subject.*?\\],\\s*(.+?)\\n```', 's'));
   if (templateMatch?.[1]) {
     return templateMatch[1].trim();
   }
-  // Fallback to **Style:** line
   const styleMatch = imageFramework.match(/\*\*Style:\*\*\s*(.+)/);
   if (styleMatch?.[1]) {
     const firstSentence = styleMatch[1].split(/[.—]/)[0].trim();
     return firstSentence;
   }
-  return 'in the style of Mike Mignola Hellboy comics, heavy black ink shadows, bold geometric shapes, high-contrast lighting, no visible faces, no text';
+  return DEFAULT_STYLE_TAG;
 }
 
 export async function generateBatchImages(
@@ -160,7 +166,11 @@ export async function generateBatchImages(
 
   for (let i = 0; i < cues.length; i++) {
     const cue = cues[i];
+    // Prompt is either pre-grounded (from prompt-grounding service) or raw cue
+    // Append the channel's style tag for visual consistency
     const enhancedPrompt = `${cue.prompt}, ${styleTag}`;
+    const wordCount = enhancedPrompt.split(/\s+/).filter(Boolean).length;
+    log.info(`Prompt [${i}] (${wordCount}w): "${enhancedPrompt}"`);
     const prefix = `image-${String(i).padStart(3, '0')}-${cue.id}`;
 
     // 16:9 landscape (default) — retry with simplified prompt on content moderation
@@ -212,7 +222,7 @@ export async function generateBatchImages(
       });
     } catch (err) {
       const msg = (err as Error).message;
-      if (msg.includes('Content Moderated')) {
+      if (msg.includes('Content Moderated') || msg.includes('Request Moderated')) {
         log.warn(`Image ${i} moderated, retrying with simplified prompt`);
         const safePrompt = `Dark atmospheric scene, dramatic shadows and light, ${styleTag}`;
         landscapeAsset = await generateImage({
@@ -221,17 +231,13 @@ export async function generateBatchImages(
           height: 720,
           outputPath: landscapePath,
         });
-      } else if (msg.includes('402') || msg.includes('Insufficient credits')) {
-        log.warn(`Out of credits at image ${i}, reusing nearest existing image`);
-        // Copy previous image as a fallback
-        const prevIdx = landscape.length - 1;
-        if (prevIdx >= 0) {
-          const { copyFile } = await import('fs/promises');
-          await copyFile(landscape[prevIdx].path, landscapePath);
-          landscapeAsset = { id: cue.id, path: landscapePath, type: 'image', metadata: { prompt: enhancedPrompt, fallback: 'true' } };
-        } else {
-          throw err;
-        }
+      } else if (msg.includes('402') || msg.includes('Insufficient credits') || msg.includes('Payment Required')) {
+        log.error(`Flux credits exhausted at image ${i}/${cues.length}. Stopping image generation.`);
+        throw new ApiError(
+          `Flux API credits exhausted after generating ${i}/${cues.length} images. Add credits at https://api.bfl.ai and retry.`,
+          'flux',
+          402
+        );
       } else {
         throw err;
       }
@@ -251,7 +257,7 @@ export async function generateBatchImages(
         });
       } catch (err) {
         const msg = (err as Error).message;
-        if (msg.includes('Content Moderated')) {
+        if (msg.includes('Content Moderated') || msg.includes('Request Moderated')) {
           log.warn(`Portrait image ${i} moderated, retrying with simplified prompt`);
           const safePrompt = `Dark atmospheric scene, dramatic shadows and light, vertical composition, portrait orientation, ${styleTag}`;
           portraitAsset = await generateImage({
@@ -260,16 +266,13 @@ export async function generateBatchImages(
             height: 1280,
             outputPath: portraitPath,
           });
-        } else if (msg.includes('402') || msg.includes('Insufficient credits')) {
-          log.warn(`Out of credits for portrait image ${i}, reusing nearest existing`);
-          const prevIdx = portrait.length - 1;
-          if (prevIdx >= 0) {
-            const { copyFile } = await import('fs/promises');
-            await copyFile(portrait[prevIdx].path, portraitPath);
-            portraitAsset = { id: cue.id, path: portraitPath, type: 'image', metadata: { prompt: enhancedPrompt, fallback: 'true' } };
-          } else {
-            throw err;
-          }
+        } else if (msg.includes('402') || msg.includes('Insufficient credits') || msg.includes('Payment Required')) {
+          log.error(`Flux credits exhausted at portrait image ${i}. Stopping.`);
+          throw new ApiError(
+            `Flux API credits exhausted. Add credits at https://api.bfl.ai and retry.`,
+            'flux',
+            402
+          );
         } else {
           throw err;
         }

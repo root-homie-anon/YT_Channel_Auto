@@ -124,6 +124,10 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
         topic,
       });
 
+      // Register in tracker so dashboard shows it immediately
+      registerPipeline(slug, productionId, topic, 'pending_script');
+      startPipelineWatcher(slug, productionId);
+
       res.status(202).json({ productionId, status: 'pending_script', topic });
     }
   } catch (err) {

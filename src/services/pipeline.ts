@@ -27,6 +27,7 @@ import { generateProductionId, readJsonFile, writeJsonFile, fileExists } from '.
 import { createLogger } from '../utils/logger.js';
 
 import { generateBatchImages, generateImage } from './flux-service.js';
+import { groundBatchPrompts } from './prompt-grounding.js';
 import { generateVoiceover } from './elevenlabs-service.js';
 import { generateMusic as generateMusicStableAudio } from './replicate-audio-service.js';
 import { generateAnimation } from './runway-service.js';
@@ -126,14 +127,29 @@ export async function runPipeline(
     // Non-music-only channels: continue straight to compilation
     return await runFromCompilation(channelSlug, productionId, config, channelDir, outputDir, contentPlan, scriptOutput, context, status, assetResult.teaserManifest);
   } catch (error) {
+    const failedStage = status.stage;
     status.stage = 'failed';
+    status.failedAtStage = failedStage;
     status.error = (error as Error).message;
     status.updatedAt = new Date();
     await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
 
+    // Notify user via Telegram
+    try {
+      await sendTextMessage(
+        `Pipeline FAILED for ${config.channel.name}\n` +
+        `Stage: ${failedStage}\n` +
+        `Error: ${(error as Error).message}\n` +
+        `Production: ${productionId}\n\n` +
+        `Fix the issue and resume — partial progress is saved.`
+      );
+    } catch {
+      log.warn('Could not send failure notification to Telegram');
+    }
+
     throw new PipelineError(
-      `Pipeline failed at stage ${status.stage}: ${(error as Error).message}`,
-      status.stage,
+      `Pipeline failed at stage ${failedStage}: ${(error as Error).message}`,
+      failedStage as string,
       error as Error
     );
   }
@@ -204,15 +220,40 @@ export async function resumePipeline(
       return await runFromPublishing(config, outputDir, compilation, scriptOutput, context, status);
     }
 
+    if (status.stage === 'failed') {
+      // Resume from last known good stage using saved error context
+      const lastGoodStage = status.failedAtStage ?? 'asset_generation';
+      log.info(`Resuming from failed state (was at: ${lastGoodStage})`);
+      status.stage = lastGoodStage as PipelineStage;
+      delete status.error;
+      await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
+      return await resumePipeline(channelSlug, productionId);
+    }
+
     throw new PipelineError(`Cannot resume pipeline at stage "${status.stage}"`, status.stage);
   } catch (error) {
+    const failedStage = status.stage;
     status.stage = 'failed';
+    status.failedAtStage = failedStage;
     status.error = (error as Error).message;
     status.updatedAt = new Date();
     await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
 
+    // Notify user via Telegram
+    try {
+      await sendTextMessage(
+        `Pipeline FAILED for ${config.channel.name}\n` +
+        `Stage: ${failedStage}\n` +
+        `Error: ${(error as Error).message}\n` +
+        `Production: ${productionId}\n\n` +
+        `Fix the issue and resume — partial progress is saved.`
+      );
+    } catch {
+      log.warn('Could not send failure notification to Telegram');
+    }
+
     throw new PipelineError(
-      `Pipeline failed at stage ${status.stage}: ${(error as Error).message}`,
+      `Pipeline failed at stage ${failedStage}: ${(error as Error).message}`,
       status.stage,
       error as Error
     );
@@ -434,8 +475,19 @@ async function runFromPublishing(
   await updateStage(status, 'complete', outputDir);
   log.info(`Pipeline complete for "${scriptOutput.title}"`);
 
-  // Post-publish cleanup — remove heavy asset files to save disk
+  // Archive assets to Supabase before cleanup
   if (publishResult.status === 'published') {
+    try {
+      const { archiveProduction } = await import('./supabase-storage.js');
+      const slug = context.channelConfig.channel.slug;
+      const prodId = outputDir.split('/').pop() ?? 'unknown';
+      await archiveProduction(slug, prodId, outputDir);
+      log.info('Assets archived to Supabase');
+    } catch (err) {
+      log.warn(`Supabase archive failed (assets preserved locally): ${(err as Error).message}`);
+    }
+
+    // Post-publish cleanup — remove heavy asset files to save disk
     try {
       await cleanupAfterPublish(outputDir);
       log.info('Post-publish cleanup complete');
@@ -605,12 +657,28 @@ async function generateAssets(
     } catch { /* start fresh */ }
   }
 
-  // Generate images from script cues (generateBatchImages already has file-skip logic)
+  // Generate images from script cues — ground prompts via visual search + LLM first
   if (manifest.images.length === 0) {
-    const imageCues = scriptOutput.script.map((section, i) => ({
+    const topic = scriptOutput.productionBrief?.topic ?? '';
+
+    // Step 1: Ground image cues with web search + Claude Haiku rewrite
+    const cuesForGrounding = scriptOutput.script.map((section, i) => ({
       id: `section-${i}`,
-      prompt: section.imageCue,
+      imageCue: section.imageCue,
+      narration: section.narration,
     }));
+    const groundingResults = await groundBatchPrompts(cuesForGrounding, topic, imageFramework);
+
+    // Step 2: Build final cue list using grounded prompts
+    const imageCues = scriptOutput.script.map((section, i) => {
+      const id = `section-${i}`;
+      const grounded = groundingResults.get(id);
+      return {
+        id,
+        prompt: grounded?.groundedPrompt ?? section.imageCue,
+      };
+    });
+
     const imageResults = await generateBatchImages(
       imageCues,
       join(outputDir, 'images'),
@@ -807,6 +875,7 @@ async function compileVideo(
       manifest,
       sections: scriptOutput.script,
       resolution: '1080x1920',
+      ...(config.visualFilter ? { visualFilterPreset: config.visualFilter } : {}),
     });
   } else {
     // 'long' or 'long+short'
@@ -814,6 +883,7 @@ async function compileVideo(
       outputDir,
       manifest,
       sections: scriptOutput.script,
+      ...(config.visualFilter ? { visualFilterPreset: config.visualFilter } : {}),
     });
 
     if (format === 'long+short' && scriptOutput.teaserScript && teaserManifest) {
@@ -822,8 +892,37 @@ async function compileVideo(
         manifest: teaserManifest,
         sections: scriptOutput.teaserScript,
         resolution: '1080x1920',
+        ...(config.visualFilter ? { visualFilterPreset: config.visualFilter } : {}),
       });
       result.teaserVideoPath = teaserResult.videoPath;
+    }
+  }
+
+  // Caption generation via ZapCap — shorts/teasers only
+  if (config.captions?.provider === 'zapcap' && config.captions.templateId && result.teaserVideoPath) {
+    const { captionVideo } = await import('./zapcap-service.js');
+    const { stat: statFile } = await import('fs/promises');
+    try {
+      const teaserStats = await statFile(result.teaserVideoPath);
+      const teaserSizeMB = teaserStats.size / 1024 / 1024;
+
+      // Free tier limits: 1.5 min duration, 200MB file size
+      if (teaserSizeMB > 200) {
+        log.warn(`Teaser too large for ZapCap (${teaserSizeMB.toFixed(1)}MB > 200MB), skipping captions`);
+      } else {
+        const teaserCaptionedPath = result.teaserVideoPath.replace('.mp4', '-captioned.mp4');
+        await captionVideo({
+          videoPath: result.teaserVideoPath,
+          outputPath: teaserCaptionedPath,
+          templateId: config.captions.templateId,
+          language: config.captions.language ?? 'en',
+        });
+        const { rename: renameFile } = await import('fs/promises');
+        await renameFile(teaserCaptionedPath, result.teaserVideoPath);
+        log.info(`Captions applied to teaser: ${result.teaserVideoPath}`);
+      }
+    } catch (err) {
+      log.warn(`ZapCap captioning failed (non-fatal): ${(err as Error).message}`);
     }
   }
 

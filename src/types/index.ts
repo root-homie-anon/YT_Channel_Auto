@@ -27,6 +27,11 @@ export interface ChannelConfig {
     subscribeNote?: string;
     additionalLinks?: string[];
   };
+  captions?: {
+    provider: 'zapcap';
+    templateId: string;
+    language?: string;
+  };
   thumbnail?: {
     provider: string;
     model: string;
@@ -242,6 +247,7 @@ export interface PipelineContext {
 }
 
 export type PipelineStage =
+  | 'pending_script'
   | 'planning'
   | 'scripting'
   | 'asset_generation'
@@ -270,5 +276,6 @@ export interface PipelineStatus {
   startedAt: Date;
   updatedAt: Date;
   error?: string;
+  failedAtStage?: string;
   checkpoint?: CheckpointData;
 }

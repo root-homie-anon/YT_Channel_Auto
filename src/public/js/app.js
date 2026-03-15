@@ -356,7 +356,12 @@ async function loadHistory() {
 }
 
 // === Pipeline Monitor ===
-const PIPELINE_STAGES = ['planning', 'scripting', 'asset_generation', 'compilation', 'approval', 'publishing', 'complete'];
+const PIPELINE_STAGES = [
+  'pending_script', 'planning', 'scripting', 'asset_generation',
+  'asset_preview', 'awaiting_asset_approval', 'compilation',
+  'metadata_generation', 'approval', 'awaiting_final_approval',
+  'ready', 'publishing', 'complete',
+];
 
 async function loadActivePipelines() {
   try {
@@ -372,11 +377,22 @@ async function loadActivePipelines() {
 
       list.innerHTML = pipelines
         .map((p) => {
-          const currentIdx = PIPELINE_STAGES.indexOf(p.stage);
+          const isFailed = p.stage === 'failed' || p.stage === 'rejected';
+          const displayStage = isFailed ? (p.failedAtStage || 'unknown') : p.stage;
+          const currentIdx = PIPELINE_STAGES.indexOf(displayStage);
           const steps = PIPELINE_STAGES.map(
-            (s, i) =>
-              `<div class="progress-step ${i < currentIdx ? 'done' : i === currentIdx ? 'current' : ''}"></div>`
+            (s, i) => {
+              let cls = '';
+              if (isFailed && i === currentIdx) cls = 'error';
+              else if (i < currentIdx) cls = 'done';
+              else if (i === currentIdx) cls = 'current';
+              return `<div class="progress-step ${cls}" title="${s.replace(/_/g, ' ')}"></div>`;
+            }
           ).join('');
+
+          const errorHtml = isFailed && p.error
+            ? `<div style="color:var(--red);font-size:12px;margin-top:6px">Failed at ${(p.failedAtStage || p.stage).replace(/_/g, ' ')}: ${p.error}</div>`
+            : '';
 
           return `<div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center">
@@ -385,6 +401,7 @@ async function loadActivePipelines() {
             </div>
             <div style="color:var(--text2);font-size:13px;margin:4px 0">${p.topic}</div>
             <div class="progress-bar">${steps}</div>
+            ${errorHtml}
             <div style="font-size:12px;color:var(--text2)">
               Started: ${new Date(p.startedAt).toLocaleTimeString()}
             </div>
@@ -526,6 +543,10 @@ function connectSSE() {
     if (data.type === 'stage_change' || data.type === 'pipeline_started' || data.type === 'pipeline_removed') {
       loadActivePipelines();
       loadStatus();
+      if (data.type === 'pipeline_removed') {
+        if (currentChannel) loadHistory();
+        loadReadyProductions();
+      }
     }
   };
   source.onerror = () => {
@@ -559,3 +580,11 @@ document.getElementById('new-channel-form').addEventListener('submit', async (e)
 // === Init ===
 loadStatus();
 connectSSE();
+
+// Polling fallback — refresh active pipelines every 10s when pipeline tab is visible
+setInterval(() => {
+  const pipelineTab = document.getElementById('tab-pipeline');
+  if (pipelineTab && pipelineTab.classList.contains('active')) {
+    loadActivePipelines();
+  }
+}, 10000);

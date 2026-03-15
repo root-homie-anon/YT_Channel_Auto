@@ -23,6 +23,7 @@ interface CompileOptions {
   manifest: AssetManifest;
   sections: ScriptSection[];
   resolution?: string;
+  visualFilterPreset?: string;
 }
 
 /**
@@ -36,8 +37,14 @@ export async function probeAudioDuration(audioPath: string): Promise<number> {
       '-of', 'csv=p=0',
       audioPath,
     ]);
-    return parseFloat(stdout.trim());
-  } catch {
+    const duration = parseFloat(stdout.trim());
+    if (isNaN(duration) || duration <= 0) {
+      log.warn(`ffprobe returned invalid duration for ${audioPath}: "${stdout.trim()}"`);
+      return 0;
+    }
+    return duration;
+  } catch (err) {
+    log.warn(`ffprobe failed for ${audioPath}: ${(err as Error).message}. Image timing may be inaccurate.`);
     return 0;
   }
 }
@@ -137,7 +144,7 @@ function buildKenBurnsCrossfadeFilter(
 }
 
 export async function compileLongFormVideo(options: CompileOptions): Promise<CompilationResult> {
-  const { outputDir, manifest, sections, resolution = '1920x1080' } = options;
+  const { outputDir, manifest, sections, resolution = '1920x1080', visualFilterPreset } = options;
   await ensureDir(outputDir);
 
   const videoPath = join(outputDir, 'final-video.mp4');
@@ -228,12 +235,41 @@ export async function compileLongFormVideo(options: CompileOptions): Promise<Com
 
     log.info(`Video compiled: ${videoPath} (${duration}s, ${(stats.size / 1024 / 1024).toFixed(1)}MB)`);
 
+    // Apply visual filters as post-processing pass
+    const filterPreset = visualFilterPreset ? getFilterPreset(visualFilterPreset) : null;
+    if (filterPreset && filterPreset.filters.length > 0) {
+      log.info(`Applying visual filter preset: ${filterPreset.name}`);
+      const filteredPath = videoPath.replace('.mp4', '-filtered.mp4');
+      const filterChain = filterPreset.filters.join(';');
+
+      const filterArgs = [
+        '-i', videoPath,
+        '-filter_complex', filterChain,
+        '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+        '-c:a', 'copy',
+        '-movflags', '+faststart',
+        '-y', filteredPath,
+      ];
+
+      try {
+        await runFfmpeg(filterArgs);
+        const { rename: renameFile } = await import('fs/promises');
+        await renameFile(filteredPath, videoPath);
+        log.info(`Visual filters applied: ${filterPreset.name}`);
+      } catch (filterErr) {
+        log.warn(`Visual filter pass failed (non-fatal): ${(filterErr as Error).message}`);
+      }
+    }
+
+    const finalStats = await stat(videoPath);
+    const finalDuration = await getVideoDuration(videoPath);
+
     return {
       videoPath,
       thumbnailPath: '', // Generated separately
-      durationSeconds: duration,
+      durationSeconds: finalDuration,
       resolution,
-      fileSizeBytes: stats.size,
+      fileSizeBytes: finalStats.size,
     };
   } catch (error) {
     if (error instanceof CompilationError) throw error;
@@ -246,7 +282,7 @@ export async function compileLongFormVideo(options: CompileOptions): Promise<Com
 }
 
 export async function compileShortFormVideo(options: CompileOptions): Promise<CompilationResult> {
-  const { outputDir, manifest, sections, resolution = '1080x1920' } = options;
+  const { outputDir, manifest, sections, resolution = '1080x1920', visualFilterPreset } = options;
   await ensureDir(outputDir);
 
   const videoPath = join(outputDir, 'teaser-video.mp4');
@@ -332,15 +368,41 @@ export async function compileShortFormVideo(options: CompileOptions): Promise<Co
 
     await runFfmpeg(ffmpegArgs);
 
-    const stats = await stat(videoPath);
-    const duration = await getVideoDuration(videoPath);
+    // Apply visual filters as post-processing pass
+    const filterPreset = visualFilterPreset ? getFilterPreset(visualFilterPreset) : null;
+    if (filterPreset && filterPreset.filters.length > 0) {
+      log.info(`Applying visual filter preset to short: ${filterPreset.name}`);
+      const filteredPath = videoPath.replace('.mp4', '-filtered.mp4');
+      const filterChain = filterPreset.filters.join(';');
+
+      const filterArgs = [
+        '-i', videoPath,
+        '-filter_complex', filterChain,
+        '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+        '-c:a', 'copy',
+        '-movflags', '+faststart',
+        '-y', filteredPath,
+      ];
+
+      try {
+        await runFfmpeg(filterArgs);
+        const { rename: renameFile } = await import('fs/promises');
+        await renameFile(filteredPath, videoPath);
+        log.info(`Visual filters applied to short: ${filterPreset.name}`);
+      } catch (filterErr) {
+        log.warn(`Visual filter pass on short failed (non-fatal): ${(filterErr as Error).message}`);
+      }
+    }
+
+    const finalStats = await stat(videoPath);
+    const finalDuration = await getVideoDuration(videoPath);
 
     return {
       videoPath,
       thumbnailPath: '',
-      durationSeconds: duration,
+      durationSeconds: finalDuration,
       resolution,
-      fileSizeBytes: stats.size,
+      fileSizeBytes: finalStats.size,
     };
   } catch (error) {
     if (error instanceof CompilationError) throw error;
@@ -775,8 +837,14 @@ async function getVideoDuration(videoPath: string): Promise<number> {
       '-of', 'csv=p=0',
       videoPath,
     ]);
-    return Math.round(parseFloat(stdout.trim()));
-  } catch {
+    const duration = Math.round(parseFloat(stdout.trim()));
+    if (isNaN(duration) || duration <= 0) {
+      log.warn(`ffprobe returned invalid duration for ${videoPath}: "${stdout.trim()}"`);
+      return 0;
+    }
+    return duration;
+  } catch (err) {
+    log.warn(`ffprobe failed for ${videoPath}: ${(err as Error).message}`);
     return 0;
   }
 }

@@ -4,11 +4,8 @@
 # dependencies
 node_modules/
 
-# YouTube OAuth credentials (per channel, never commit)
-projects/**/.youtube-oauth.json
-
-# Production outputs (large media files)
-projects/**/output/
+# Channel data (configs, frameworks, state, assets — all per-deployment)
+projects/
 
 # build output
 dist/

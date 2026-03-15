@@ -31,9 +31,23 @@ export const ENV = {
   // Gemini / Nano Banana 2
   GEMINI_API_KEY: process.env.GEMINI_API_KEY ?? '',
 
+  // Anthropic (Prompt Grounding)
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '',
+
+  // Tavily (Visual Reference Search)
+  TAVILY_API_KEY: process.env.TAVILY_API_KEY ?? '',
+
   // YouTube OAuth
   YOUTUBE_CLIENT_ID: process.env.YOUTUBE_CLIENT_ID ?? '',
   YOUTUBE_CLIENT_SECRET: process.env.YOUTUBE_CLIENT_SECRET ?? '',
+
+  // ZapCap (Captions)
+  ZAPCAP_API_KEY: process.env.ZAPCAP_API_KEY ?? '',
+  ZAPCAP_API_SECRET: process.env.ZAPCAP_API_SECRET ?? '',
+
+  // Supabase (Asset Archival)
+  SUPABASE_URL: process.env.SUPABASE_URL ?? '',
+  SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY ?? '',
 
   // Dashboard
   DASHBOARD_PORT: process.env.DASHBOARD_PORT ?? '3000',

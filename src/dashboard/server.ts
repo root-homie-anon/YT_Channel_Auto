@@ -10,6 +10,7 @@ import queueRoutes from './routes/queue.js';
 import pipelineRoutes from './routes/pipeline.js';
 import historyRoutes from './routes/history.js';
 import oauthRoutes from './routes/oauth.js';
+import { PipelineStage } from '../types/index.js';
 import { startTelegramApprovalListener } from '../services/telegram-service.js';
 import {
   listPendingApprovals,
@@ -17,10 +18,11 @@ import {
   rejectProduction,
 } from '../services/approval-service.js';
 import { resumePipeline } from '../services/pipeline.js';
-import { registerPipeline, startPipelineWatcher, removePipeline } from './state/pipeline-tracker.js';
+import { registerPipeline, startPipelineWatcher, removePipeline, getActivePipeline } from './state/pipeline-tracker.js';
 import {
   findStalledProductions,
   markStalledAsFailed,
+  findActiveProductions,
 } from '../services/production-queue.js';
 
 const PROJECT_ROOT = resolve(__dirname, '..', '..');
@@ -59,6 +61,23 @@ app.listen(PORT, async () => {
     }
   } catch (err) {
     console.error('Failed to recover pending approvals:', (err as Error).message);
+  }
+
+  // Recover active (non-stalled) pipelines into the tracker
+  try {
+    const projectsDir = resolve(PROJECT_ROOT, 'projects');
+    const activeProds = await findActiveProductions(projectsDir);
+    for (const a of activeProds) {
+      if (!getActivePipeline(a.channelSlug)) {
+        registerPipeline(a.channelSlug, a.productionId, a.topic, a.stage as PipelineStage);
+        startPipelineWatcher(a.channelSlug, a.productionId);
+      }
+    }
+    if (activeProds.length > 0) {
+      console.log(`Recovered ${activeProds.length} active pipeline(s)`);
+    }
+  } catch (err) {
+    console.error('Failed to recover active pipelines:', (err as Error).message);
   }
 
   // Detect and handle stalled pipelines (crashed during active processing)

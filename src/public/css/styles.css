@@ -201,6 +201,7 @@ th { color: var(--text2); font-size: 12px; text-transform: uppercase; letter-spa
 
 .progress-step.done { background: var(--green); }
 .progress-step.current { background: var(--accent); animation: pulse 1.5s infinite; }
+.progress-step.error { background: var(--red); }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }

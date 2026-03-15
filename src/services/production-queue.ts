@@ -112,6 +112,7 @@ export function getConcurrencyStatus(): {
 
 // Stages that indicate a pipeline was running and may have crashed
 const ACTIVE_STAGES: string[] = [
+  'pending_script',
   'planning',
   'scripting',
   'asset_generation',
@@ -220,6 +221,66 @@ export async function markStalledAsFailed(
   status.updatedAt = new Date();
   await writeJsonFile(statusPath, status);
   log.info(`Marked stalled production as failed: ${channelSlug}/${productionId} — ${reason}`);
+}
+
+/**
+ * Find productions in active stages that were updated recently (not stalled).
+ * Used on dashboard startup to re-register running pipelines in the tracker.
+ */
+export async function findActiveProductions(projectsDir: string): Promise<Array<{
+  channelSlug: string;
+  productionId: string;
+  stage: string;
+  topic: string;
+}>> {
+  const active: Array<{ channelSlug: string; productionId: string; stage: string; topic: string }> = [];
+
+  let channelDirs: string[];
+  try {
+    channelDirs = readdirSync(projectsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && d.name.startsWith('ch-'))
+      .map((d) => d.name);
+  } catch {
+    return active;
+  }
+
+  for (const slug of channelDirs) {
+    const outputBase = join(projectsDir, slug, 'output');
+    if (!existsSync(outputBase)) continue;
+
+    const runs = readdirSync(outputBase, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+
+    for (const run of runs) {
+      const statusPath = join(outputBase, run, 'pipeline-status.json');
+      if (!existsSync(statusPath)) continue;
+
+      try {
+        const status = await readJsonFile<PipelineStatus>(statusPath);
+        if (!ACTIVE_STAGES.includes(status.stage)) continue;
+
+        const updatedAt = new Date(status.updatedAt);
+        const elapsed = Date.now() - updatedAt.getTime();
+        // Only return non-stalled (fresh) active productions
+        if (elapsed <= STALL_THRESHOLD_MS) {
+          let topic = 'unknown';
+          try {
+            const plan = await readJsonFile<{ topic: string }>(join(outputBase, run, 'content-plan.json'));
+            topic = plan.topic;
+          } catch {
+            try {
+              const script = await readJsonFile<{ title: string }>(join(outputBase, run, 'script-output.json'));
+              topic = script.title;
+            } catch { /* use default */ }
+          }
+          active.push({ channelSlug: slug, productionId: run, stage: status.stage, topic });
+        }
+      } catch { /* skip */ }
+    }
+  }
+
+  return active;
 }
 
 // === Post-Publish Cleanup ===
