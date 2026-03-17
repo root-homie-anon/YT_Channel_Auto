@@ -31,7 +31,7 @@ async function ensureBucket(): Promise<void> {
   if (!data) {
     const { error } = await supabase.storage.createBucket(BUCKET, {
       public: false,
-      fileSizeLimit: 50 * 1024 * 1024, // 50MB per file
+      fileSizeLimit: 500 * 1024 * 1024, // 500MB per file (videos can be 300MB+)
     });
     if (error && !error.message.includes('already exists')) {
       throw new Error(`Failed to create bucket: ${error.message}`);
@@ -111,6 +111,9 @@ async function uploadDirectory(
 export interface ArchiveResult {
   channelSlug: string;
   productionId: string;
+  imageFiles: UploadResult[];
+  imagePortraitFiles: UploadResult[];
+  voiceoverFiles: UploadResult[];
   musicFiles: UploadResult[];
   animationFiles: UploadResult[];
   videoFile?: UploadResult;
@@ -120,11 +123,10 @@ export interface ArchiveResult {
 }
 
 /**
- * Archive production assets to Supabase Storage.
+ * Archive ALL production assets to Supabase Storage.
  * Called after publish, before local cleanup.
  *
- * Archives: music, animations, final video, thumbnail.
- * Skips: images (cheap to regenerate), voiceover (no reuse value).
+ * Archives: images (landscape + portrait), voiceover, music, animations, final video, thumbnail.
  */
 export async function archiveProduction(
   channelSlug: string,
@@ -156,6 +158,41 @@ export async function archiveProduction(
     archivedAt: new Date().toISOString(),
   };
 
+  // Upload images (landscape — 16:9)
+  const imageFiles = await uploadDirectory(
+    `images/${prefix}`,
+    join(outputDir, 'images'),
+    'auto',
+    meta
+  );
+  log.info(`Archived ${imageFiles.length} landscape image(s)`);
+
+  // Upload images (portrait — 9:16 for shorts)
+  const imagePortraitFiles = await uploadDirectory(
+    `images-portrait/${prefix}`,
+    join(outputDir, 'images-portrait'),
+    'auto',
+    meta
+  );
+  log.info(`Archived ${imagePortraitFiles.length} portrait image(s)`);
+
+  // Upload voiceover files
+  const voiceoverFiles = await uploadDirectory(
+    `voiceover/${prefix}`,
+    join(outputDir, 'voiceover'),
+    'auto',
+    meta
+  );
+  // Also grab teaser voiceover if it exists
+  const teaserVoFiles = await uploadDirectory(
+    `voiceover/${prefix}/teaser`,
+    join(outputDir, 'teaser'),
+    'auto',
+    meta
+  );
+  const allVoiceoverFiles = [...voiceoverFiles, ...teaserVoFiles];
+  log.info(`Archived ${allVoiceoverFiles.length} voiceover file(s)`);
+
   // Upload music tracks
   const musicFiles = await uploadDirectory(
     `music/${prefix}`,
@@ -174,18 +211,24 @@ export async function archiveProduction(
   );
   log.info(`Archived ${animationFiles.length} animation file(s)`);
 
-  // Upload final video
+  // Upload final video — verify file integrity before uploading
   let videoFile: UploadResult | undefined;
   try {
     const compilation = await readJsonFile<CompilationResult>(join(outputDir, 'compilation-result.json'));
     if (compilation.videoPath && existsSync(compilation.videoPath)) {
-      videoFile = await uploadFile(
-        `videos/${prefix}/${basename(compilation.videoPath)}`,
-        compilation.videoPath,
-        'video/mp4',
-        meta
-      );
-      log.info(`Archived final video (${(videoFile.size / 1024 / 1024).toFixed(1)}MB)`);
+      const videoStats = await stat(compilation.videoPath);
+      // Sanity check: video must be > 1MB to be valid (avoids uploading corrupt/truncated files)
+      if (videoStats.size > 1024 * 1024) {
+        videoFile = await uploadFile(
+          `videos/${prefix}/${basename(compilation.videoPath)}`,
+          compilation.videoPath,
+          'video/mp4',
+          meta
+        );
+        log.info(`Archived final video (${(videoFile.size / 1024 / 1024).toFixed(1)}MB)`);
+      } else {
+        log.warn(`Skipping video archive — file too small (${videoStats.size} bytes), likely corrupt`);
+      }
     }
   } catch { /* optional */ }
 
@@ -205,6 +248,9 @@ export async function archiveProduction(
   } catch { /* optional */ }
 
   const totalBytes = [
+    ...imageFiles,
+    ...imagePortraitFiles,
+    ...allVoiceoverFiles,
     ...musicFiles,
     ...animationFiles,
     ...(videoFile ? [videoFile] : []),
@@ -214,6 +260,9 @@ export async function archiveProduction(
   const result: ArchiveResult = {
     channelSlug,
     productionId,
+    imageFiles,
+    imagePortraitFiles,
+    voiceoverFiles: allVoiceoverFiles,
     musicFiles,
     animationFiles,
     ...(videoFile ? { videoFile } : {}),

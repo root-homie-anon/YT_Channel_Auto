@@ -44,7 +44,6 @@ import { sendApprovalRequest, sendTextMessage, sendVideo, sendPhoto, sendAudio }
 import {
   waitForCompilationSlot,
   releaseCompilationSlot,
-  cleanupAfterPublish,
 } from './production-queue.js';
 
 const execFileAsync = promisify(execFile);
@@ -213,6 +212,30 @@ export async function resumePipeline(
       return await runPipeline(channelSlug, contentPlan, scriptOutput, productionId);
     }
 
+    if (status.stage === 'awaiting_asset_approval') {
+      // Paused at asset checkpoint — approval not yet received, return current state
+      log.info('Pipeline is awaiting asset approval — no action needed');
+      const manifest = await readJsonFile<AssetManifest>(join(outputDir, 'asset-manifest.json'));
+      context.assetManifest = manifest;
+      return context;
+    }
+
+    if (status.stage === 'awaiting_final_approval') {
+      // Paused at final checkpoint — approval not yet received, return current state
+      log.info('Pipeline is awaiting final approval — no action needed');
+      const compilation = await readJsonFile<CompilationResult>(join(outputDir, 'compilation-result.json'));
+      context.compilationResult = compilation;
+      return context;
+    }
+
+    if (status.stage === 'ready') {
+      // Approved but not yet published — resume from publishing
+      log.info('Pipeline is ready — resuming from publishing');
+      const compilation = await readJsonFile<CompilationResult>(join(outputDir, 'compilation-result.json'));
+      context.compilationResult = compilation;
+      return await runFromPublishing(config, outputDir, compilation, scriptOutput, context, status);
+    }
+
     if (status.stage === 'publishing') {
       // Resuming after final approval — upload to YouTube
       const compilation = await readJsonFile<CompilationResult>(join(outputDir, 'compilation-result.json'));
@@ -286,9 +309,21 @@ async function runFromCompilation(
   if (await fileExists(compilationResultPath)) {
     try {
       const existingCompilation = await readJsonFile<CompilationResult>(compilationResultPath);
-      if (existingCompilation.videoPath && await fileExists(existingCompilation.videoPath)) {
+      const needsTeaser = (config.channel.format === 'long+short' || config.channel.format === 'short')
+        && scriptOutput.teaserScript && scriptOutput.teaserScript.length > 0;
+      const teaserComplete = !needsTeaser || (existingCompilation.teaserVideoPath && await fileExists(existingCompilation.teaserVideoPath));
+      if (existingCompilation.videoPath && await fileExists(existingCompilation.videoPath) && teaserComplete) {
         log.info('Compilation result already exists, skipping');
         context.compilationResult = existingCompilation;
+
+        // Send thumbnail to Telegram regardless of approval flow
+        if (existingCompilation.thumbnailPath && config.channel.format !== 'music-only') {
+          try {
+            await sendPhoto(existingCompilation.thumbnailPath, `🖼 Thumbnail: ${scriptOutput.title}`);
+          } catch (err) {
+            log.warn(`Failed to send thumbnail to Telegram: ${(err as Error).message}`);
+          }
+        }
 
         if (config.skipApproval) {
           log.info('skipApproval enabled — skipping final checkpoint, publishing as unlisted');
@@ -374,6 +409,16 @@ async function runFromCompilation(
     log.info(`Injected ${context.compilationResult.segmentTimestamps.length} chapter markers into description`);
   }
 
+  // Send thumbnail to Telegram regardless of approval flow
+  if (context.compilationResult?.thumbnailPath && config.channel.format !== 'music-only') {
+    try {
+      await sendPhoto(context.compilationResult.thumbnailPath, `🖼 Thumbnail: ${scriptOutput.title}`);
+      log.info('Thumbnail sent to Telegram');
+    } catch (err) {
+      log.warn(`Failed to send thumbnail to Telegram: ${(err as Error).message}`);
+    }
+  }
+
   // Stage: Send final approval (Telegram Checkpoint 2 — non-blocking)
   // NOTE: Title, description, and hashtags must be set in scriptOutput BEFORE
   // the pipeline reaches this point. For music-only channels, the @content-strategist
@@ -454,9 +499,19 @@ async function runFromPublishing(
       // No publish params file — use defaults
     }
 
+    // Verify thumbnail file exists before passing to YouTube
+    let thumbnailForUpload = compilation.thumbnailPath;
+    if (thumbnailForUpload) {
+      const thumbExists = await fileExists(thumbnailForUpload);
+      if (!thumbExists) {
+        log.warn(`Thumbnail file not found at ${thumbnailForUpload} — skipping thumbnail upload`);
+        thumbnailForUpload = '';
+      }
+    }
+
     const ytResult = await uploadVideo(oauthPath, {
       videoPath: compilation.videoPath,
-      thumbnailPath: compilation.thumbnailPath,
+      thumbnailPath: thumbnailForUpload,
       title: scriptOutput.title,
       description: scriptOutput.description,
       hashtags: scriptOutput.hashtags,
@@ -467,6 +522,30 @@ async function runFromPublishing(
     publishResult.youtubeUrl = ytResult.youtubeUrl;
     publishResult.status = 'published';
     log.info(`Video published: ${ytResult.youtubeUrl}`);
+
+    // Upload teaser/short as a separate YouTube Short (long+short format only)
+    if (compilation.teaserVideoPath && await fileExists(compilation.teaserVideoPath)) {
+      try {
+        const shortTitle = scriptOutput.title.length > 90
+          ? scriptOutput.title.slice(0, 90) + '...'
+          : scriptOutput.title;
+        const shortResult = await uploadVideo(oauthPath, {
+          videoPath: compilation.teaserVideoPath,
+          thumbnailPath: '',
+          title: `${shortTitle} #Shorts`,
+          description: scriptOutput.description,
+          hashtags: [...scriptOutput.hashtags, '#Shorts'],
+          privacy,
+          ...(scheduledTime ? { scheduledTime } : {}),
+        });
+        log.info(`Short published: ${shortResult.youtubeUrl}`);
+        // Store short video ID alongside main video
+        publishResult.shortVideoId = shortResult.youtubeVideoId;
+        publishResult.shortUrl = shortResult.youtubeUrl;
+      } catch (shortErr) {
+        log.warn(`Short upload failed (non-fatal): ${(shortErr as Error).message}`);
+      }
+    }
   }
 
   context.publishResult = publishResult;
@@ -475,7 +554,7 @@ async function runFromPublishing(
   await updateStage(status, 'complete', outputDir);
   log.info(`Pipeline complete for "${scriptOutput.title}"`);
 
-  // Archive assets to Supabase before cleanup
+  // Archive all assets to Supabase after publish (cleanup disabled until archive is proven reliable)
   if (publishResult.status === 'published') {
     try {
       const { archiveProduction } = await import('./supabase-storage.js');
@@ -487,13 +566,6 @@ async function runFromPublishing(
       log.warn(`Supabase archive failed (assets preserved locally): ${(err as Error).message}`);
     }
 
-    // Post-publish cleanup — remove heavy asset files to save disk
-    try {
-      await cleanupAfterPublish(outputDir);
-      log.info('Post-publish cleanup complete');
-    } catch (err) {
-      log.warn(`Post-publish cleanup failed: ${(err as Error).message}`);
-    }
   }
 
   return context;
@@ -514,8 +586,10 @@ async function generateAssets(
 ): Promise<AssetGenerationResult> {
   const imageFramework = await loadFramework(channelDir, config.frameworks.image);
   const isMusicOnly = config.channel.format === 'music-only';
-  const hasTeaser = (config.channel.format === 'long+short' || config.channel.format === 'short')
+  const isShortOnly = config.channel.format === 'short';
+  const hasTeaser = (config.channel.format === 'long+short')
     && scriptOutput.teaserScript && scriptOutput.teaserScript.length > 0;
+  const needsPortrait = isShortOnly || hasTeaser;
 
   const manifest: AssetManifest = {
     images: [],
@@ -683,7 +757,7 @@ async function generateAssets(
       imageCues,
       join(outputDir, 'images'),
       imageFramework,
-      { generatePortrait: !!hasTeaser }
+      { generatePortrait: !!needsPortrait }
     );
     manifest.images = imageResults.landscape;
     if (imageResults.portrait.length > 0) {
@@ -822,13 +896,25 @@ async function generateAssets(
   // Generate separate teaser VO and build teaser manifest
   let teaserManifest: AssetManifest | undefined;
   if (hasTeaser && scriptOutput.teaserScript) {
-    log.info('Generating teaser voiceover');
-    const teaserNarration = scriptOutput.teaserScript.map((s) => s.narration).join('\n\n');
-    const teaserVoAsset = await generateVoiceover({
-      text: teaserNarration,
-      voiceId: config.credentials.elevenLabsVoiceId,
-      outputPath: join(outputDir, 'teaser', 'teaser-narration.mp3'),
-    });
+    const teaserVoPath = join(outputDir, 'teaser', 'teaser-narration.mp3');
+    let teaserVoAsset;
+    if (await fileExists(teaserVoPath)) {
+      log.info('Teaser voiceover already exists, skipping');
+      teaserVoAsset = {
+        id: 'teaser-voiceover',
+        path: teaserVoPath,
+        type: 'voiceover' as const,
+        metadata: { voiceId: config.credentials.elevenLabsVoiceId, charCount: String(scriptOutput.teaserScript.map((s) => s.narration).join('\n\n').length) },
+      };
+    } else {
+      log.info('Generating teaser voiceover');
+      const teaserNarration = scriptOutput.teaserScript.map((s) => s.narration).join('\n\n');
+      teaserVoAsset = await generateVoiceover({
+        text: teaserNarration,
+        voiceId: config.credentials.elevenLabsVoiceId,
+        outputPath: teaserVoPath,
+      });
+    }
 
     const teaserImageCount = Math.min(scriptOutput.teaserScript.length, manifest.images.length);
     const portraitAvailable = manifest.portraitImages && manifest.portraitImages.length > 0;
@@ -870,9 +956,13 @@ async function compileVideo(
       outputDir, manifest, '1920x1080', config.visualFilter, introOutroOpts
     );
   } else if (format === 'short') {
+    // Use portrait images for shorts if available
+    const shortManifest: AssetManifest = manifest.portraitImages?.length
+      ? { ...manifest, images: manifest.portraitImages }
+      : manifest;
     result = await compileShortFormVideo({
       outputDir,
-      manifest,
+      manifest: shortManifest,
       sections: scriptOutput.script,
       resolution: '1080x1920',
       ...(config.visualFilter ? { visualFilterPreset: config.visualFilter } : {}),
@@ -898,28 +988,30 @@ async function compileVideo(
     }
   }
 
-  // Caption generation via ZapCap — shorts/teasers only
-  if (config.captions?.provider === 'zapcap' && config.captions.templateId && result.teaserVideoPath) {
+  // Caption generation via ZapCap — shorts and teasers
+  // For standalone 'short' format, caption the main video; for 'long+short', caption the teaser
+  const captionTargetPath = format === 'short' ? result.videoPath : result.teaserVideoPath;
+  if (config.captions?.provider === 'zapcap' && config.captions.templateId && captionTargetPath) {
     const { captionVideo } = await import('./zapcap-service.js');
     const { stat: statFile } = await import('fs/promises');
     try {
-      const teaserStats = await statFile(result.teaserVideoPath);
-      const teaserSizeMB = teaserStats.size / 1024 / 1024;
+      const targetStats = await statFile(captionTargetPath);
+      const targetSizeMB = targetStats.size / 1024 / 1024;
 
       // Free tier limits: 1.5 min duration, 200MB file size
-      if (teaserSizeMB > 200) {
-        log.warn(`Teaser too large for ZapCap (${teaserSizeMB.toFixed(1)}MB > 200MB), skipping captions`);
+      if (targetSizeMB > 200) {
+        log.warn(`Video too large for ZapCap (${targetSizeMB.toFixed(1)}MB > 200MB), skipping captions`);
       } else {
-        const teaserCaptionedPath = result.teaserVideoPath.replace('.mp4', '-captioned.mp4');
+        const captionedPath = captionTargetPath.replace('.mp4', '-captioned.mp4');
         await captionVideo({
-          videoPath: result.teaserVideoPath,
-          outputPath: teaserCaptionedPath,
+          videoPath: captionTargetPath,
+          outputPath: captionedPath,
           templateId: config.captions.templateId,
           language: config.captions.language ?? 'en',
         });
         const { rename: renameFile } = await import('fs/promises');
-        await renameFile(teaserCaptionedPath, result.teaserVideoPath);
-        log.info(`Captions applied to teaser: ${result.teaserVideoPath}`);
+        await renameFile(captionedPath, captionTargetPath);
+        log.info(`Captions applied: ${captionTargetPath}`);
       }
     } catch (err) {
       log.warn(`ZapCap captioning failed (non-fatal): ${(err as Error).message}`);
@@ -1066,10 +1158,6 @@ async function sendFinalApprovalMessages(
   } catch {
     log.warn('No preview clip to send');
   }
-  if (compilation.thumbnailPath && config.channel.format !== 'music-only') {
-    await sendPhoto(compilation.thumbnailPath, `Thumbnail: ${scriptOutput.title}`);
-  }
-
   const messageId = await sendApprovalRequest({
     videoTitle: scriptOutput.title,
     youtubeUrl: '',

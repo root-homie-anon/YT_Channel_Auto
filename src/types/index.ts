@@ -197,6 +197,8 @@ export interface PublishResult {
   youtubeUrl: string;
   status: 'uploaded' | 'pending_approval' | 'approved' | 'rejected' | 'published';
   scheduledTime?: Date;
+  shortVideoId?: string;
+  shortUrl?: string;
 }
 
 // === Music-Only Metadata Context Types ===

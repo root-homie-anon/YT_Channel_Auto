@@ -18,6 +18,11 @@ interface GroundingInput {
   narration: string;
   topic: string;
   imageFramework: string;
+  previousContext?: {
+    narration: string;
+    cue: string;
+    groundedPrompt: string;
+  };
 }
 
 interface GroundingResult {
@@ -101,12 +106,27 @@ interface ClaudeResponse {
 
 const GROUNDING_SYSTEM_PROMPT = `You are a visual research assistant that rewrites image descriptions into optimized prompts for the Flux 2 Pro AI image generator.
 
-Your job: take a raw image cue from a video script, use the provided visual reference research to ground the description in reality, then output a single optimized Flux prompt.
+Your job: take a raw image cue from a video script, validate that it matches the narration, ground it in visual research, and output a single optimized Flux prompt.
+
+## CRITICAL — Narration Alignment (Rule Zero)
+The image MUST depict what the viewer is hearing. Before rewriting, check:
+1. Read the NARRATION and identify the most concrete, vivid noun or action in it
+2. Check whether the image cue is a direct visual translation of that thing
+3. If the cue is disconnected from the narration (e.g., narration talks about "press conference" but cue shows "empty corridor," or narration says "flying saucer reports" but cue shows "parked planes"), you MUST REPLACE the cue with a scene that depicts what the narration actually describes
+4. Self-check: if someone saw only the image with no audio, could they guess what the narration is about? If not, the cue is wrong — fix it
+
+A generic atmospheric mood shot that is merely "themed" around the topic is a FAILURE. The image must illustrate the specific content of the narration.
+
+## Previous Image Context
+You will be given the PREVIOUS section's narration and grounded prompt. Use this to:
+1. **Avoid repetition** — if the previous image already shows a radar room, do NOT default to another radar room. Find the next visual beat.
+2. **Build continuity** — the previous narration tells you what the viewer just heard. The current narration continues or contrasts that. Use this flow to pick the right beat.
+3. **Advance the story visually** — each image should feel like the next panel in a graphic novel, not a repeat of the last one.
 
 ## Your Process
-1. Read the VISUAL REFERENCE RESEARCH to understand what the subject actually looks like — specific materials, colors, shapes, architectural details, clothing, equipment, landscape features
-2. Read the NARRATION to understand what emotion and context the image must support
-3. Rewrite the image cue with grounded visual details from the research, replacing vague descriptions with specific, accurate ones
+1. Validate the cue against the narration (Rule Zero above) — replace if disconnected
+2. Read the VISUAL REFERENCE RESEARCH to understand what the subject actually looks like — specific materials, colors, shapes, architectural details, clothing, equipment, landscape features
+3. Rewrite the (validated or replaced) cue with grounded visual details from the research, replacing vague descriptions with specific, accurate ones
 
 ## Flux Prompt Rules (MUST follow)
 - Maximum 55 words (leave room for the style tag that gets appended after your output)
@@ -128,6 +148,7 @@ async function rewriteWithClaude(
   topic: string,
   searchContext: string,
   imageFramework: string,
+  previousContext?: GroundingInput['previousContext'],
 ): Promise<string> {
   const apiKey = requireEnv('ANTHROPIC_API_KEY');
 
@@ -139,10 +160,20 @@ async function rewriteWithClaude(
     paletteMatch?.[0]?.trim() ?? '',
   ].filter(Boolean).join('\n\n');
 
+  const previousBlock = previousContext
+    ? `## PREVIOUS SECTION (for context and to avoid repetition)
+PREVIOUS NARRATION: ${previousContext.narration}
+PREVIOUS IMAGE PROMPT: ${previousContext.groundedPrompt}
+
+Do NOT repeat the same scene, setting, or composition as the previous image. Advance the visual story.
+
+`
+    : '';
+
   const userMessage = `## TOPIC
 ${topic}
 
-## NARRATION (what the viewer hears during this image)
+${previousBlock}## NARRATION (what the viewer hears during this image)
 ${narration}
 
 ## RAW IMAGE CUE (rewrite this)
@@ -192,16 +223,16 @@ Rewrite the image cue into an optimized Flux prompt. Ground it in the visual res
  * Ground a single image cue: web search for visual context, then LLM rewrite.
  */
 export async function groundImagePrompt(input: GroundingInput): Promise<GroundingResult> {
-  const { imageCue, narration, topic, imageFramework } = input;
+  const { imageCue, narration, topic, imageFramework, previousContext } = input;
 
   // Step 1: Search for visual reference
   const searchQuery = buildSearchQuery(imageCue, topic);
   log.info(`Searching: "${searchQuery.slice(0, 80)}"`);
   const searchContext = await searchVisualContext(searchQuery);
 
-  // Step 2: LLM rewrite with grounded context
+  // Step 2: LLM rewrite with grounded context + previous section awareness
   log.info(`Grounding cue: "${imageCue.slice(0, 60)}..."`);
-  const groundedPrompt = await rewriteWithClaude(imageCue, narration, topic, searchContext, imageFramework);
+  const groundedPrompt = await rewriteWithClaude(imageCue, narration, topic, searchContext, imageFramework, previousContext);
 
   // Enforce word limit (safety net — LLM should already respect it)
   const words = groundedPrompt.split(/\s+/).filter(Boolean);
@@ -230,6 +261,8 @@ export async function groundBatchPrompts(
 
   log.info(`Grounding ${cues.length} image cues for topic: "${topic}"`);
 
+  let previousContext: GroundingInput['previousContext'] | undefined;
+
   for (let i = 0; i < cues.length; i++) {
     const cue = cues[i];
     try {
@@ -238,8 +271,16 @@ export async function groundBatchPrompts(
         narration: cue.narration,
         topic,
         imageFramework,
+        ...(previousContext ? { previousContext } : {}),
       });
       results.set(cue.id, result);
+
+      // Track for next iteration
+      previousContext = {
+        narration: cue.narration,
+        cue: cue.imageCue,
+        groundedPrompt: result.groundedPrompt,
+      };
     } catch (err) {
       // Non-fatal — fall back to original cue if grounding fails
       log.warn(`Grounding failed for cue ${i} (${cue.id}), using original: ${(err as Error).message}`);
@@ -248,6 +289,12 @@ export async function groundBatchPrompts(
         groundedPrompt: cue.imageCue,
         searchContext: '',
       });
+      // Still update previous context with the fallback
+      previousContext = {
+        narration: cue.narration,
+        cue: cue.imageCue,
+        groundedPrompt: cue.imageCue,
+      };
     }
 
     if (i < cues.length - 1) {

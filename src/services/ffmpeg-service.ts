@@ -772,6 +772,17 @@ export async function compileMusicOnlyVideo(
       }
     }
 
+    // Clean up temporary segment files after duration probing
+    if (segmentCount > 1) {
+      const { unlink } = await import('fs/promises');
+      for (let i = 0; i < segmentCount; i++) {
+        const pad = String(i).padStart(3, '0');
+        const segPath = join(outputDir, `segment-${pad}.mp4`);
+        await unlink(segPath).catch(() => {});
+      }
+      log.info(`Cleaned up ${segmentCount} temporary segment files`);
+    }
+
     return {
       videoPath,
       thumbnailPath: '',

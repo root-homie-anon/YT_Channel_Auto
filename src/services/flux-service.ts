@@ -75,7 +75,7 @@ export async function generateImage(options: FluxGenerateOptions): Promise<Asset
       id: randomUUID(),
       path: outputPath,
       type: 'image',
-      metadata: { prompt, width: String(width), height: String(height) },
+      metadata: { prompt, width: String(width), height: String(height), bflTaskId: submitResult.id, bflResultUrl: sampleUrl },
     };
   } catch (error) {
     if (error instanceof ApiError) throw error;
