@@ -28,9 +28,9 @@ export const TEMPLATE_MAP: Record<ChannelFormat, string> = {
 };
 
 export const FRAMEWORK_FILES: Record<ChannelFormat, string[]> = {
-  long: ['script-formula.md', 'image-framework.md', 'music-framework.md', 'thumbnail-formula.md', 'title-formula.md'],
-  short: ['script-formula.md', 'image-framework.md', 'music-framework.md', 'thumbnail-formula.md', 'title-formula.md'],
-  'long+short': ['script-formula.md', 'image-framework.md', 'music-framework.md', 'thumbnail-formula.md', 'title-formula.md', 'teaser-formula.md'],
+  long: ['script-formula.md', 'image-framework.md', 'music-framework.md', 'thumbnail-formula.md', 'title-formula.md', 'description-formula.md'],
+  short: ['script-formula.md', 'image-framework.md', 'music-framework.md', 'thumbnail-formula.md', 'title-formula.md', 'description-formula.md'],
+  'long+short': ['script-formula.md', 'image-framework.md', 'music-framework.md', 'thumbnail-formula.md', 'title-formula.md', 'description-formula.md', 'teaser-formula.md'],
   'music-only': ['image-framework.md', 'music-framework.md', 'title-formula.md', 'description-formula.md'],
 };
 
@@ -76,7 +76,7 @@ export function buildConfig(inputs: ChannelInputs, oauthPath: string): ChannelCo
       music: 'frameworks/music-framework.md',
       thumbnail: isMusicOnly ? '' : 'frameworks/thumbnail-formula.md',
       title: 'frameworks/title-formula.md',
-      ...(isMusicOnly && { description: 'frameworks/description-formula.md' }),
+      description: 'frameworks/description-formula.md',
       ...(includesShorts && { teaser: 'frameworks/teaser-formula.md' }),
     },
     visualFilter: 'none',

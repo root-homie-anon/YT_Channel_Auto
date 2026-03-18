@@ -171,7 +171,8 @@ router.post('/:slug/run/:productionId', async (req: Request, res: Response) => {
       return;
     }
 
-    if (getActivePipeline(slug)) {
+    const existing = getActivePipeline(slug);
+    if (existing && existing.productionId !== productionId) {
       res.status(409).json({ error: 'Pipeline already running for this channel' });
       return;
     }

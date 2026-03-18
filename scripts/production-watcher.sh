@@ -127,7 +127,7 @@ Execute these phases IN ORDER. Do not skip steps. Save artifacts between phases 
 1. Read channel config: projects/$SLUG/config.json
 2. Read content plan: projects/$SLUG/output/$PROD_ID/content-plan.json (has duration, segment count)
 3. Read ALL frameworks in projects/$SLUG/frameworks/ (image, animation, music, title-formula, description-formula)
-4. Read the shared description formula: shared/description-formula.md
+4. Read the channel's description formula from the frameworks path in config.json (e.g. frameworks/description-formula.md)
 5. Read the Flux skill: .claude/agents/skills/flux-image-producer.md
 6. Read the Runway skill: .claude/agents/skills/runway-animation-producer.md
 7. Read rotation state: projects/$SLUG/rotation-state.json
@@ -236,13 +236,22 @@ Execute these phases IN ORDER. Do not skip steps.
    - thumbnail-formula.md
    - title-formula.md
    - teaser-formula.md (if exists)
-4. Read the shared description formula: shared/description-formula.md
+4. Read the channel's description formula from the frameworks path in config.json (e.g. frameworks/description-formula.md)
 
 ═══ PHASE 2 — GENERATE SCRIPT ═══
 5. Using script-formula.md, write a full narrated script for the topic: \"$TOPIC\"
 6. Structure the script as an array of sections, each with:
    { \"sectionName\": \"<name>\", \"narration\": \"<full narration text>\", \"imageCue\": \"<visual description for this section>\", \"durationSeconds\": 0 }
 7. The script should be 15-22 minutes when read aloud at natural pace
+
+═══ PHASE 2b — GENERATE TEASER SCRIPT (long+short channels only) ═══
+7b. Check config.json format — if it is \"long+short\":
+   - Read teaser-formula.md
+   - Using the LONG script from step 5 as input, write a 60-90 second teaser script
+   - The teaser is NOT a summary — it's a hook that builds intrigue and drives viewers to the full video
+   - Structure as an array of 3-5 sections, same format as step 6
+   - Total narration should be ~150-250 words (60-90 seconds when read aloud)
+   - This will be compiled as a YouTube Short (9:16 vertical)
 
 ═══ PHASE 3 — GENERATE PRODUCTION BRIEF ═══
 8. Based on the script content, generate a productionBrief object:
@@ -283,7 +292,7 @@ Execute these phases IN ORDER. Do not skip steps.
     { \"title\": \"...\", \"candidateNumber\": N, \"reason\": \"...\" }
 
 ═══ PHASE 5 — GENERATE DESCRIPTION & HASHTAGS ═══
-14. Read the shared description formula or channel-specific one
+14. Read the channel's description formula from the frameworks path in config.json
 15. Generate description, tags (15-20 search terms), and hashtags following the formula
 
 ═══ PHASE 6 — START PIPELINE ═══
@@ -295,6 +304,7 @@ Execute these phases IN ORDER. Do not skip steps.
         \"tags\": [...],
         \"hashtags\": [...],
         \"script\": [<sections from step 6>],
+        \"teaserScript\": [<teaser sections from step 7b — ONLY if long+short format, omit otherwise>],
         \"productionBrief\": <brief from step 8>
       }
     }
@@ -302,7 +312,10 @@ Execute these phases IN ORDER. Do not skip steps.
 CRITICAL RULES:
 - The topic '$TOPIC' is NOT the title. Generate the title using title-formula.md.
 - The productionBrief.thumbnailDirection is REQUIRED — without it, no thumbnail gets generated.
+- For long+short channels: teaserScript is REQUIRED — without it, no YouTube Short gets produced.
+  The teaser must be 60-90 seconds (150-250 words), NOT the full 15-minute script.
 - Music prompt is baked into config.json — do not generate or override it.
+- Read the channel's own description-formula.md (from frameworks path in config.json), NOT the shared one.
 - Work autonomously. Do not ask for confirmation. Execute the full workflow."
     fi
 

@@ -1019,39 +1019,42 @@ async function compileVideo(
   }
 
   // Thumbnail generation via NBPro — skip for music-only channels
-  // Thumbnail prompt comes from @script-writer's production brief, not built mechanically
   if (format !== 'music-only' && config.thumbnail) {
     const thumbnailPath = join(outputDir, 'thumbnail.png');
-    const td = scriptOutput.productionBrief?.thumbnailDirection;
-    if (!td || !td.nbproPrompt) {
-      log.warn('No thumbnailDirection.nbproPrompt in production brief — skipping thumbnail generation');
-    } else {
-      try {
-        // Load system instruction from config path
-        let systemInstruction: string | undefined;
-        if (config.thumbnail.systemInstructionPath) {
-          const { resolve } = await import('path');
-          const projectRoot = resolve(channelDir, '..');
-          const siPath = resolve(projectRoot, '..', config.thumbnail.systemInstructionPath);
-          systemInstruction = await loadSystemInstruction(siPath);
-        }
+    // Use agent-provided prompt if available, otherwise build a fallback from script content
+    let thumbnailPrompt = scriptOutput.productionBrief?.thumbnailDirection?.nbproPrompt;
+    if (!thumbnailPrompt) {
+      // Fallback: build prompt from title + first image cue
+      const firstCue = scriptOutput.script[0]?.imageCue ?? '';
+      const topic = scriptOutput.productionBrief?.topic ?? scriptOutput.title;
+      thumbnailPrompt = `YouTube thumbnail for "${topic}". ${firstCue}. Cinematic, dramatic lighting, eye-catching composition.`;
+      log.info('No thumbnailDirection.nbproPrompt in production brief — using fallback thumbnail prompt');
+    }
 
-        // Prompt is pre-built by the agent — pass through unchanged
-        const nbResult = await generateThumbnailNBPro({
-          prompt: td.nbproPrompt,
-          aspectRatio: (config.thumbnail.aspectRatio as '16:9' | '9:16') ?? '16:9',
-          outputPath: thumbnailPath,
-          resolution: (config.thumbnail.resolution as '2K' | '4K') ?? '4K',
-          ...(systemInstruction ? { systemInstruction } : {}),
-          ...(config.thumbnail.model ? { model: config.thumbnail.model } : {}),
-          ...(config.thumbnail.generationSettings ? { generationSettings: config.thumbnail.generationSettings } : {}),
-        });
-        result.thumbnailPath = nbResult.filePath;
-        log.info(`NBPro thumbnail generated: ${nbResult.filePath}`);
-      } catch (err) {
-        log.warn(`NBPro thumbnail failed: ${(err as Error).message}. Thumbnail will be empty.`);
-        result.thumbnailPath = '';
+    try {
+      // Load system instruction from config path
+      let systemInstruction: string | undefined;
+      if (config.thumbnail.systemInstructionPath) {
+        const { resolve } = await import('path');
+        const projectRoot = resolve(channelDir, '..');
+        const siPath = resolve(projectRoot, '..', config.thumbnail.systemInstructionPath);
+        systemInstruction = await loadSystemInstruction(siPath);
       }
+
+      const nbResult = await generateThumbnailNBPro({
+        prompt: thumbnailPrompt,
+        aspectRatio: (config.thumbnail.aspectRatio as '16:9' | '9:16') ?? '16:9',
+        outputPath: thumbnailPath,
+        resolution: (config.thumbnail.resolution as '2K' | '4K') ?? '4K',
+        ...(systemInstruction ? { systemInstruction } : {}),
+        ...(config.thumbnail.model ? { model: config.thumbnail.model } : {}),
+        ...(config.thumbnail.generationSettings ? { generationSettings: config.thumbnail.generationSettings } : {}),
+      });
+      result.thumbnailPath = nbResult.filePath;
+      log.info(`NBPro thumbnail generated: ${nbResult.filePath}`);
+    } catch (err) {
+      log.warn(`NBPro thumbnail failed: ${(err as Error).message}. Thumbnail will be empty.`);
+      result.thumbnailPath = '';
     }
   }
 

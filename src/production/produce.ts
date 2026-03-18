@@ -79,7 +79,9 @@ export async function setupProduction(
     music: await loadFw(config.frameworks.music),
     thumbnail: await loadFw(config.frameworks.thumbnail),
     title: await loadFw(config.frameworks.title),
-    description: await loadFw('../../shared/description-formula.md'),
+    description: config.frameworks.description
+      ? await loadFw(config.frameworks.description)
+      : await loadFw('../../shared/description-formula.md'),
   };
   if (config.frameworks.teaser) {
     frameworks.teaser = await loadFw(config.frameworks.teaser);
