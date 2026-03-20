@@ -337,3 +337,8 @@ done
 # Wait for all background CC sessions to finish
 wait
 log "Watcher cycle complete"
+
+# Post-production validator: fix completed productions with missing pieces
+log "Running post-production validator..."
+cd "$PROJECT_DIR" && npx tsx scripts/validate-productions.ts --fix >> "$LOG_FILE" 2>&1
+log "Validator complete"

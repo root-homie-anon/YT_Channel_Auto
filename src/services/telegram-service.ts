@@ -152,7 +152,6 @@ export async function sendTextMessage(text: string): Promise<number> {
     body: JSON.stringify({
       chat_id: chatId,
       text,
-      parse_mode: 'HTML',
     }),
   });
 

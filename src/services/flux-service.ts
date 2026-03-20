@@ -129,7 +129,7 @@ async function pollForResult(pollingUrl: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 /** Compact style anchor — appended to every grounded prompt */
-const DEFAULT_STYLE_TAG = 'Mike Mignola Hellboy style, heavy black ink shadows, bold flat shapes, high-contrast, graphic novel panel, no faces, no text';
+const DEFAULT_STYLE_TAG = 'Mike Mignola comic illustration style, heavy black ink shadows, bold flat shapes, high-contrast, graphic novel panel, no faces, no text';
 
 /**
  * Extract the style tag from the image framework's Flux Prompt Construction

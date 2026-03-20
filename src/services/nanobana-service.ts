@@ -60,20 +60,42 @@ export async function generateThumbnailNBPro(
 
   try {
     const ai = getClient();
-    const response = await ai.models.generateContent({
-      model,
-      contents: fullPrompt,
-      config: {
-        responseModalities: ['IMAGE', 'TEXT'],
-        ...(systemInstruction ? { systemInstruction } : {}),
-        ...(generationSettings?.topP != null ? { topP: generationSettings.topP } : {}),
-        ...(generationSettings?.maxOutputTokens != null ? { maxOutputTokens: generationSettings.maxOutputTokens } : {}),
-        imageConfig: {
-          aspectRatio,
-          imageSize: resolution,
-        },
-      },
-    });
+
+    const MAX_RETRIES = 4;
+    const RETRY_DELAY_MS = 15_000;
+    let response: Awaited<ReturnType<typeof ai.models.generateContent>> | undefined;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        response = await ai.models.generateContent({
+          model,
+          contents: fullPrompt,
+          config: {
+            responseModalities: ['IMAGE', 'TEXT'],
+            ...(systemInstruction ? { systemInstruction } : {}),
+            ...(generationSettings?.topP != null ? { topP: generationSettings.topP } : {}),
+            ...(generationSettings?.maxOutputTokens != null ? { maxOutputTokens: generationSettings.maxOutputTokens } : {}),
+            imageConfig: {
+              aspectRatio,
+              imageSize: resolution,
+            },
+          },
+        });
+        break; // success
+      } catch (err) {
+        const msg = (err as Error).message ?? '';
+        if ((msg.includes('503') || msg.includes('UNAVAILABLE')) && attempt < MAX_RETRIES) {
+          log.warn(`Gemini 503 (attempt ${attempt}/${MAX_RETRIES}) — retrying in ${RETRY_DELAY_MS / 1000}s`);
+          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (!response) {
+      throw new ApiError(`Gemini failed after ${MAX_RETRIES} retries`, 'nbpro');
+    }
 
     // Extract image from response parts
     const parts = response.candidates?.[0]?.content?.parts;

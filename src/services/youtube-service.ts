@@ -119,6 +119,21 @@ export async function uploadVideo(
   }
 }
 
+export async function setThumbnail(
+  oauthPath: string,
+  videoId: string,
+  thumbnailPath: string
+): Promise<void> {
+  log.info(`Setting thumbnail for video ${videoId}`);
+  const auth = await getAuthClient(oauthPath);
+  const youtube = google.youtube({ version: 'v3', auth });
+  await youtube.thumbnails.set({
+    videoId,
+    media: { body: createReadStream(thumbnailPath) },
+  });
+  log.info(`Thumbnail set for video: ${videoId}`);
+}
+
 export async function updateVideoPrivacy(
   oauthPath: string,
   videoId: string,

@@ -59,6 +59,27 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
       return;
     }
 
+    // Reject if channel already has a pending_script production (prevent duplicate queuing)
+    const channelOutputDir = join(PROJECT_ROOT, 'projects', slug, 'output');
+    if (existsSync(channelOutputDir)) {
+      const { readdirSync } = await import('fs');
+      const existingRuns = readdirSync(channelOutputDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory());
+      for (const run of existingRuns) {
+        const statusPath = join(channelOutputDir, run.name, 'pipeline-status.json');
+        if (!existsSync(statusPath)) continue;
+        try {
+          const existingStatus = await readJsonFile<{ stage: string; topic?: string }>(statusPath);
+          if (existingStatus.stage === 'pending_script') {
+            res.status(409).json({
+              error: `Channel already has a pending production (${run.name}: "${existingStatus.topic ?? 'unknown'}"). Process or remove it first.`,
+            });
+            return;
+          }
+        } catch { /* skip unreadable */ }
+      }
+    }
+
     const config = await loadChannelConfig(slug);
     const isMusicOnly = config.channel.format === 'music-only';
 
@@ -76,7 +97,7 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
     // If no prompts, create pending production for @content-strategist to build prompts from frameworks.
     const hasPrompts = imagePrompts.length > 0 && animationPrompts.length > 0 && !!musicPrompt;
 
-    const plan = isMusicOnly && hasPrompts
+    const plan = isMusicOnly
       ? buildContentPlan(topic, config, { segmentCount, imagePrompts, musicPrompt, animationPrompts, lastEnvironment, lastAtmosphere })
       : buildContentPlan(topic, config);
     await writeJsonFile(join(outputDir, 'content-plan.json'), plan);
@@ -177,7 +198,18 @@ router.post('/:slug/run/:productionId', async (req: Request, res: Response) => {
       return;
     }
 
+    // Reject if production has already progressed past pending_script
     const outputDir = join(PROJECT_ROOT, 'projects', slug, 'output', productionId);
+    try {
+      const currentStatus = await readJsonFile<{ stage: string }>(join(outputDir, 'pipeline-status.json'));
+      const blockStages = ['pending_script', 'asset_generation', 'asset_preview', 'awaiting_asset_approval',
+        'compilation', 'approval', 'awaiting_final_approval', 'ready', 'publishing', 'complete', 'failed'];
+      if (blockStages.includes(currentStatus.stage)) {
+        res.status(409).json({ error: `Production already at stage "${currentStatus.stage}" — cannot restart` });
+        return;
+      }
+    } catch { /* no status file, proceed */ }
+
     await saveScriptOutput(outputDir, scriptOutput);
 
     const config = await loadChannelConfig(slug);
@@ -227,9 +259,14 @@ router.get('/pending', async (_req: Request, res: Response) => {
       if (!existsSync(outputDir)) continue;
 
       const runs = readdirSync(outputDir, { withFileTypes: true })
-        .filter((d) => d.isDirectory());
+        .filter((d) => d.isDirectory())
+        .sort((a, b) => a.name.localeCompare(b.name)); // oldest first
 
+      // Only return ONE pending production per channel (oldest) to prevent watcher from
+      // spawning multiple agents for the same channel
+      let foundForChannel = false;
       for (const run of runs) {
+        if (foundForChannel) break;
         const statusPath = join(outputDir, run.name, 'pipeline-status.json');
         if (!existsSync(statusPath)) continue;
 
@@ -241,6 +278,7 @@ router.get('/pending', async (_req: Request, res: Response) => {
             topic: status.topic ?? 'unknown',
             createdAt: status.startedAt ?? '',
           });
+          foundForChannel = true;
         }
       }
     }

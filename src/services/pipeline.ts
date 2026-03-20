@@ -255,6 +255,12 @@ export async function resumePipeline(
 
     throw new PipelineError(`Cannot resume pipeline at stage "${status.stage}"`, status.stage);
   } catch (error) {
+    // If inner function (runPipeline/runFromCompilation/runFromPublishing) already
+    // handled the failure (wrote status + sent Telegram), just re-throw
+    if (error instanceof PipelineError) {
+      throw error;
+    }
+
     const failedStage = status.stage;
     status.stage = 'failed';
     status.failedAtStage = failedStage;
@@ -262,7 +268,7 @@ export async function resumePipeline(
     status.updatedAt = new Date();
     await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
 
-    // Notify user via Telegram
+    // Notify user via Telegram — only for errors not already reported by inner pipeline
     try {
       await sendTextMessage(
         `Pipeline FAILED for ${config.channel.name}\n` +
@@ -316,13 +322,10 @@ async function runFromCompilation(
         log.info('Compilation result already exists, skipping');
         context.compilationResult = existingCompilation;
 
-        // Send thumbnail to Telegram regardless of approval flow
-        if (existingCompilation.thumbnailPath && config.channel.format !== 'music-only') {
-          try {
-            await sendPhoto(existingCompilation.thumbnailPath, `🖼 Thumbnail: ${scriptOutput.title}`);
-          } catch (err) {
-            log.warn(`Failed to send thumbnail to Telegram: ${(err as Error).message}`);
-          }
+        // Check if checkpoint already exists — don't re-send approval
+        if (status.checkpoint && status.stage === 'awaiting_final_approval') {
+          log.info('Checkpoint already exists — not re-sending approval');
+          return context;
         }
 
         if (config.skipApproval) {
@@ -379,18 +382,29 @@ async function runFromCompilation(
 
   // Inject chapter markers into description if segment timestamps exist
   if (context.compilationResult?.segmentTimestamps && context.compilationResult.segmentTimestamps.length > 0) {
-    // Load scene labels from agent (if available) to replace default "Scene N" labels
-    try {
-      const sceneLabels = await readJsonFile<string[]>(join(outputDir, 'scene-labels.json'));
-      if (Array.isArray(sceneLabels)) {
-        for (let i = 0; i < context.compilationResult.segmentTimestamps.length; i++) {
-          if (sceneLabels[i]) {
-            context.compilationResult.segmentTimestamps[i].label = sceneLabels[i];
-          }
+    // Use song names from manifest for music-only channels, scene-labels for narrated
+    const manifest = context.assetManifest ?? await readJsonFile<AssetManifest>(join(outputDir, 'asset-manifest.json')).catch(() => null);
+    if (config.channel.format === 'music-only' && manifest) {
+      for (let i = 0; i < context.compilationResult.segmentTimestamps.length; i++) {
+        const songName = manifest.music[i]?.metadata?.songName;
+        if (songName) {
+          context.compilationResult.segmentTimestamps[i].label = songName;
         }
       }
-    } catch {
-      // No scene labels file — use default "Scene N" labels from compilation
+    } else {
+      // Narrated channels: load scene labels from agent if available
+      try {
+        const sceneLabels = await readJsonFile<string[]>(join(outputDir, 'scene-labels.json'));
+        if (Array.isArray(sceneLabels)) {
+          for (let i = 0; i < context.compilationResult.segmentTimestamps.length; i++) {
+            if (sceneLabels[i]) {
+              context.compilationResult.segmentTimestamps[i].label = sceneLabels[i];
+            }
+          }
+        }
+      } catch {
+        // No scene labels file — use default "Scene N" labels from compilation
+      }
     }
 
     const chapters = context.compilationResult.segmentTimestamps
@@ -543,7 +557,10 @@ async function runFromPublishing(
         publishResult.shortVideoId = shortResult.youtubeVideoId;
         publishResult.shortUrl = shortResult.youtubeUrl;
       } catch (shortErr) {
-        log.warn(`Short upload failed (non-fatal): ${(shortErr as Error).message}`);
+        log.error(`Short upload failed: ${(shortErr as Error).message}`);
+        try {
+          await sendTextMessage(`⚠️ "${scriptOutput.title}" — short video upload FAILED. Main video published OK.\nError: ${(shortErr as Error).message?.slice(0, 200)}`);
+        } catch { /* Telegram send failed too */ }
       }
     }
   }
@@ -710,6 +727,37 @@ async function generateAssets(
       // Save manifest incrementally after each segment — crash-safe
       await writeJsonFile(partialManifestPath, manifest);
       log.info(`Segment ${i} complete: manifest saved (${manifest.images.length}i/${manifest.animations.length}a/${manifest.music.length}m)`);
+    }
+
+    // Generate song names for each music segment and rename .wav files
+    const hasSongNames = manifest.music.every((m) => m.metadata?.songName);
+    if (!hasSongNames) {
+      try {
+        const { generateSongNames } = await import('./song-name-service.js');
+        const imagePromptsForNames = manifest.images.map((img) => img.metadata?.prompt ?? '');
+        const musicPromptForNames = config.musicPrompt ?? prompts.musicPrompt ?? '';
+        const songNames = await generateSongNames(imagePromptsForNames, musicPromptForNames, config.channel.name, config.channel.slug);
+
+        const { rename: renameFile } = await import('fs/promises');
+        for (let i = 0; i < manifest.music.length; i++) {
+          const name = songNames[i] ?? `Track ${i + 1}`;
+          manifest.music[i].metadata = { ...manifest.music[i].metadata, songName: name };
+
+          // Rename .wav file to slugified song name
+          const oldPath = manifest.music[i].path;
+          const slugName = name.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase();
+          const newPath = join(outputDir, 'music', `${slugName}.wav`);
+          if (oldPath !== newPath && await fileExists(oldPath)) {
+            await renameFile(oldPath, newPath);
+            manifest.music[i].path = newPath;
+          }
+        }
+
+        await writeJsonFile(partialManifestPath, manifest);
+        log.info(`Song names generated: ${songNames.join(', ')}`);
+      } catch (err) {
+        log.warn(`Song name generation failed (non-fatal): ${(err as Error).message}`);
+      }
     }
 
     return { manifest };
@@ -976,15 +1024,28 @@ async function compileVideo(
       ...(config.visualFilter ? { visualFilterPreset: config.visualFilter } : {}),
     });
 
-    if (format === 'long+short' && scriptOutput.teaserScript && teaserManifest) {
-      const teaserResult = await compileShortFormVideo({
-        outputDir: join(outputDir, 'teaser'),
-        manifest: teaserManifest,
-        sections: scriptOutput.teaserScript,
-        resolution: '1080x1920',
-        ...(config.visualFilter ? { visualFilterPreset: config.visualFilter } : {}),
-      });
-      result.teaserVideoPath = teaserResult.videoPath;
+    if (format === 'long+short') {
+      if (!scriptOutput.teaserScript || scriptOutput.teaserScript.length === 0) {
+        log.error('long+short format requires teaserScript but none provided — short will be missing');
+        await sendTextMessage(`⚠️ "${scriptOutput.title}" — no teaser script provided. Short video will NOT be produced.`);
+      } else if (!teaserManifest) {
+        log.error('long+short format requires teaser manifest but none built — short will be missing');
+        await sendTextMessage(`⚠️ "${scriptOutput.title}" — teaser assets missing. Short video will NOT be produced.`);
+      } else {
+        try {
+          const teaserResult = await compileShortFormVideo({
+            outputDir: join(outputDir, 'teaser'),
+            manifest: teaserManifest,
+            sections: scriptOutput.teaserScript,
+            resolution: '1080x1920',
+            ...(config.visualFilter ? { visualFilterPreset: config.visualFilter } : {}),
+          });
+          result.teaserVideoPath = teaserResult.videoPath;
+        } catch (teaserErr) {
+          log.error(`Teaser compilation failed: ${(teaserErr as Error).message}`);
+          await sendTextMessage(`⚠️ "${scriptOutput.title}" — teaser compilation failed. Main video OK, short will be missing.`);
+        }
+      }
     }
   }
 
@@ -1053,8 +1114,11 @@ async function compileVideo(
       result.thumbnailPath = nbResult.filePath;
       log.info(`NBPro thumbnail generated: ${nbResult.filePath}`);
     } catch (err) {
-      log.warn(`NBPro thumbnail failed: ${(err as Error).message}. Thumbnail will be empty.`);
+      log.error(`NBPro thumbnail failed: ${(err as Error).message}`);
       result.thumbnailPath = '';
+      try {
+        await sendTextMessage(`⚠️ "${scriptOutput.title}" — thumbnail generation FAILED (${(err as Error).message?.slice(0, 100)}). Video will upload without custom thumbnail.`);
+      } catch { /* Telegram send failed too */ }
     }
   }
 
