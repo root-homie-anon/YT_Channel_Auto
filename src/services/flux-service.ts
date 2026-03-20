@@ -57,16 +57,19 @@ export async function generateImage(options: FluxGenerateOptions): Promise<Asset
     });
     log.info(`Image generation submitted, task: ${submitResult.id}`);
 
-    // Step 2: Poll for completion
-    const sampleUrl = await pollForResult(submitResult.polling_url ?? `https://api.bfl.ai/v1/get_result?id=${submitResult.id}`);
+    // Step 2: Poll for completion (with retry for transient network errors)
+    const sampleUrl = await withRetry('flux-poll', () =>
+      pollForResult(submitResult.polling_url ?? `https://api.bfl.ai/v1/get_result?id=${submitResult.id}`)
+    );
 
-    // Step 3: Download the image (signed URL valid for 10 min)
-    const imageResponse = await fetch(sampleUrl);
-    if (!imageResponse.ok) {
-      throw new ApiError('Failed to download generated image from BFL', 'flux', imageResponse.status);
-    }
-
-    const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+    // Step 3: Download the image (with retry — signed URL valid for 10 min)
+    const imageBuffer = await withRetry('flux-download', async () => {
+      const imageResponse = await fetch(sampleUrl);
+      if (!imageResponse.ok) {
+        throw new ApiError('Failed to download generated image from BFL', 'flux', imageResponse.status);
+      }
+      return Buffer.from(await imageResponse.arrayBuffer());
+    });
     await writeFile(outputPath, imageBuffer);
 
     log.info(`Image saved: ${outputPath}`);
@@ -193,12 +196,12 @@ export async function generateBatchImages(
         } else {
           let portraitAsset: AssetFile;
           try {
-            portraitAsset = await generateImage({
+            portraitAsset = await withRetry(`flux-portrait-resume-${i}`, () => generateImage({
               prompt: `${enhancedPrompt}, vertical composition, portrait orientation`,
               width: 720,
               height: 1280,
               outputPath: portraitPath,
-            });
+            }), { maxAttempts: 3, baseDelayMs: 5000, maxDelayMs: 30000 });
           } catch (err) {
             const msg = (err as Error).message;
             if (msg.includes('Content Moderated')) {
@@ -214,12 +217,12 @@ export async function generateBatchImages(
     }
 
     try {
-      landscapeAsset = await generateImage({
+      landscapeAsset = await withRetry(`flux-image-${i}`, () => generateImage({
         prompt: enhancedPrompt,
         width: 1280,
         height: 720,
         outputPath: landscapePath,
-      });
+      }), { maxAttempts: 3, baseDelayMs: 5000, maxDelayMs: 30000 });
     } catch (err) {
       const msg = (err as Error).message;
       if (msg.includes('Content Moderated') || msg.includes('Request Moderated')) {
@@ -249,12 +252,12 @@ export async function generateBatchImages(
       const portraitPath = join(outputDir, '..', 'images-portrait', `${prefix}.png`);
       let portraitAsset: AssetFile;
       try {
-        portraitAsset = await generateImage({
+        portraitAsset = await withRetry(`flux-portrait-${i}`, () => generateImage({
           prompt: `${enhancedPrompt}, vertical composition, portrait orientation`,
           width: 720,
           height: 1280,
           outputPath: portraitPath,
-        });
+        }), { maxAttempts: 3, baseDelayMs: 5000, maxDelayMs: 30000 });
       } catch (err) {
         const msg = (err as Error).message;
         if (msg.includes('Content Moderated') || msg.includes('Request Moderated')) {

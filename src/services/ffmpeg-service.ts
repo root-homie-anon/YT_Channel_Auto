@@ -51,7 +51,7 @@ export async function probeAudioDuration(audioPath: string): Promise<number> {
 
 /**
  * Scale section durations proportionally so they sum to the actual VO duration.
- * This keeps images in sync with the narration.
+ * Fallback method when silence detection doesn't produce enough boundaries.
  */
 function scaleSectionDurations(
   sections: ScriptSection[],
@@ -62,8 +62,119 @@ function scaleSectionDurations(
     return sections.map((s) => s.durationSeconds);
   }
   const ratio = actualVoDuration / scriptedTotal;
-  log.info(`Scaling section durations: scripted=${scriptedTotal}s, actual VO=${actualVoDuration.toFixed(1)}s, ratio=${ratio.toFixed(3)}`);
+  log.info(`Proportional scaling: scripted=${scriptedTotal}s, actual VO=${actualVoDuration.toFixed(1)}s, ratio=${ratio.toFixed(3)}`);
   return sections.map((s) => Math.max(1, Math.round(s.durationSeconds * ratio * 10) / 10));
+}
+
+/**
+ * Detect silence gaps in a VO file and use them as section boundaries.
+ * Returns an array of per-section durations derived from actual audio pauses.
+ * Falls back to proportional scaling if not enough boundaries are found.
+ */
+async function detectSectionBoundaries(
+  voPath: string,
+  sections: ScriptSection[],
+  actualVoDuration: number
+): Promise<number[]> {
+  const sectionCount = sections.length;
+  if (sectionCount <= 1) {
+    return [actualVoDuration];
+  }
+
+  try {
+    // Run silencedetect — look for gaps >= 0.5s at -35dB threshold
+    // Section breaks are typically 0.6–1.5s; intra-sentence pauses are shorter
+    const { stderr } = await execFileAsync('ffmpeg', [
+      '-i', voPath,
+      '-af', 'silencedetect=noise=-35dB:d=0.5',
+      '-f', 'null', '-',
+    ], { maxBuffer: 10 * 1024 * 1024 });
+
+    // Parse silence_start and silence_end pairs
+    const silenceStarts = [...stderr.matchAll(/silence_start:\s*([\d.]+)/g)].map(m => parseFloat(m[1]));
+    const silenceEnds = [...stderr.matchAll(/silence_end:\s*([\d.]+)/g)].map(m => parseFloat(m[1]));
+
+    // Build midpoints of each silence gap (transition point between sections)
+    const midpoints: number[] = [];
+    for (let i = 0; i < Math.min(silenceStarts.length, silenceEnds.length); i++) {
+      const mid = (silenceStarts[i] + silenceEnds[i]) / 2;
+      // Skip silences in the first 0.5s or last 0.5s (not real boundaries)
+      if (mid > 0.5 && mid < actualVoDuration - 0.5) {
+        midpoints.push(mid);
+      }
+    }
+
+    log.info(`Silence detection found ${midpoints.length} gaps for ${sectionCount - 1} expected boundaries`);
+
+    // We need exactly sectionCount - 1 boundaries
+    const neededBoundaries = sectionCount - 1;
+
+    if (midpoints.length < neededBoundaries) {
+      // Not enough silence gaps found — fall back to proportional scaling
+      log.warn(`Only ${midpoints.length} silence gaps found, need ${neededBoundaries} — falling back to proportional scaling`);
+      return scaleSectionDurations(sections, actualVoDuration);
+    }
+
+    // If we found more gaps than needed, pick the best ones using scripted timing as a guide
+    let boundaries: number[];
+    if (midpoints.length === neededBoundaries) {
+      boundaries = midpoints;
+    } else {
+      // Use scripted cumulative durations as expected boundary positions,
+      // then find the closest silence midpoint for each expected position
+      const scriptedTotal = sections.reduce((sum, s) => sum + s.durationSeconds, 0);
+      const ratio = actualVoDuration / scriptedTotal;
+      boundaries = [];
+      const used = new Set<number>();
+
+      for (let i = 0; i < neededBoundaries; i++) {
+        const expectedTime = sections
+          .slice(0, i + 1)
+          .reduce((sum, s) => sum + s.durationSeconds, 0) * ratio;
+
+        // Find closest unused midpoint
+        let bestIdx = -1;
+        let bestDist = Infinity;
+        for (let j = 0; j < midpoints.length; j++) {
+          if (used.has(j)) continue;
+          const dist = Math.abs(midpoints[j] - expectedTime);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestIdx = j;
+          }
+        }
+
+        if (bestIdx >= 0) {
+          boundaries.push(midpoints[bestIdx]);
+          used.add(bestIdx);
+        } else {
+          // Shouldn't happen, but use expected time as fallback
+          boundaries.push(expectedTime);
+        }
+      }
+
+      // Sort boundaries chronologically
+      boundaries.sort((a, b) => a - b);
+    }
+
+    // Convert boundaries to per-section durations
+    const durations: number[] = [];
+    let prevTime = 0;
+    for (const boundary of boundaries) {
+      durations.push(Math.max(1, Math.round((boundary - prevTime) * 10) / 10));
+      prevTime = boundary;
+    }
+    // Last section: from last boundary to end of VO
+    durations.push(Math.max(1, Math.round((actualVoDuration - prevTime) * 10) / 10));
+
+    const totalDuration = durations.reduce((s, d) => s + d, 0);
+    log.info(`Silence-based durations (${durations.length} sections, total=${totalDuration.toFixed(1)}s): ${durations.map(d => d.toFixed(1)).join(', ')}`);
+
+    return durations;
+  } catch (err) {
+    log.warn(`Silence detection failed: ${(err as Error).message} — falling back to proportional scaling`);
+    return scaleSectionDurations(sections, actualVoDuration);
+  }
 }
 
 /**
@@ -153,12 +264,12 @@ export async function compileLongFormVideo(options: CompileOptions): Promise<Com
   log.info(`Compiling long-form video (${sections.length} sections)`);
 
   try {
-    // Scale section durations to match actual VO length
+    // Detect section boundaries from VO silence gaps for accurate image timing
     let durations = sections.map((s) => s.durationSeconds);
     if (manifest.voiceover.length > 0) {
       const actualVoDuration = await probeAudioDuration(manifest.voiceover[0].path);
       if (actualVoDuration > 0) {
-        durations = scaleSectionDurations(sections, actualVoDuration);
+        durations = await detectSectionBoundaries(manifest.voiceover[0].path, sections, actualVoDuration);
       }
     }
 
@@ -291,12 +402,12 @@ export async function compileShortFormVideo(options: CompileOptions): Promise<Co
   log.info(`Compiling short-form video (${sections.length} sections)`);
 
   try {
-    // Scale section durations to match actual VO length
+    // Detect section boundaries from VO silence gaps for accurate image timing
     let durations = sections.map((s) => s.durationSeconds);
     if (manifest.voiceover.length > 0) {
       const actualVoDuration = await probeAudioDuration(manifest.voiceover[0].path);
       if (actualVoDuration > 0) {
-        durations = scaleSectionDurations(sections, actualVoDuration);
+        durations = await detectSectionBoundaries(manifest.voiceover[0].path, sections, actualVoDuration);
       }
     }
 
