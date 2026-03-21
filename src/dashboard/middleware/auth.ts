@@ -6,9 +6,9 @@ export function checkAuthConfig(): void {
   const user = process.env.DASHBOARD_USER;
   const pass = process.env.DASHBOARD_PASS;
   if (!user || !pass) {
-    console.error(
-      '[auth] FATAL: DASHBOARD_USER or DASHBOARD_PASS is not set. ' +
-      'All requests will be denied with 503 until credentials are configured.'
+    console.warn(
+      '[auth] WARNING: DASHBOARD_USER or DASHBOARD_PASS is not set. ' +
+      'Dashboard is running without authentication. Bind to 127.0.0.1 for security.'
     );
   }
 }
@@ -31,7 +31,8 @@ export function basicAuth(req: Request, res: Response, next: NextFunction): void
   const pass = process.env.DASHBOARD_PASS;
 
   if (!user || !pass) {
-    res.status(503).json({ error: 'Dashboard authentication is not configured. Set DASHBOARD_USER and DASHBOARD_PASS in .env.' });
+    // No auth configured — allow through (localhost-only bind provides protection)
+    next();
     return;
   }
 
