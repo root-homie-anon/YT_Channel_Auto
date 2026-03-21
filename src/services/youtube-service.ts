@@ -173,9 +173,25 @@ export async function setThumbnail(
   log.info(`Setting thumbnail for video ${videoId}`);
   const auth = await getAuthClient(oauthPath);
   const youtube = google.youtube({ version: 'v3', auth });
+
+  // YouTube limit is 2MB — resize if needed
+  let thumbPath = thumbnailPath;
+  const thumbStat = await statFile(thumbnailPath);
+  if (thumbStat.size > 2_000_000) {
+    log.info(`Thumbnail too large (${(thumbStat.size / 1024 / 1024).toFixed(1)}MB) — resizing to 1280x720`);
+    const resizedPath = thumbnailPath.replace(/\.(png|jpg|jpeg)$/i, '-yt.jpg');
+    await execFileAsync('ffmpeg', [
+      '-i', thumbnailPath,
+      '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:-1:-1:color=black',
+      '-q:v', '2',
+      '-y', resizedPath,
+    ]);
+    thumbPath = resizedPath;
+  }
+
   await youtube.thumbnails.set({
     videoId,
-    media: { body: createReadStream(thumbnailPath) },
+    media: { body: createReadStream(thumbPath) },
   });
   log.info(`Thumbnail set for video: ${videoId}`);
 }
