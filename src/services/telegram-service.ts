@@ -196,8 +196,7 @@ async function sendFile(
   filePath: string,
   caption?: string,
 ): Promise<number> {
-  const { createReadStream } = await import('fs');
-  const { stat } = await import('fs/promises');
+  const { stat, readFile } = await import('fs/promises');
   const { basename } = await import('path');
 
   const fileStats = await stat(filePath);
@@ -205,14 +204,7 @@ async function sendFile(
 
   log.info(`Sending ${fieldName} to Telegram: ${fileName} (${(fileStats.size / 1024 / 1024).toFixed(1)}MB)`);
 
-  // Read file into buffer for multipart upload
-  const fileBuffer = await new Promise<Buffer>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    const stream = createReadStream(filePath);
-    stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-    stream.on('end', () => resolve(Buffer.concat(chunks)));
-    stream.on('error', reject);
-  });
+  const fileBuffer = await readFile(filePath);
 
   const boundary = `----FormBoundary${Date.now()}`;
   const parts: Buffer[] = [];

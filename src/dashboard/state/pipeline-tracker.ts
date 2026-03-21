@@ -19,6 +19,7 @@ export interface ActivePipeline {
 }
 
 const activePipelines = new Map<string, ActivePipeline>();
+const activeWatchers = new Map<string, NodeJS.Timeout>();
 const sseClients: Response[] = [];
 
 export function getActivePipelines(): ActivePipeline[] {
@@ -62,12 +63,23 @@ export function addSseClient(res: Response): void {
 
 function broadcast(event: { type: string; data: unknown }): void {
   const payload = `data: ${JSON.stringify(event)}\n\n`;
-  for (const client of sseClients) {
-    client.write(payload);
+  for (let i = sseClients.length - 1; i >= 0; i--) {
+    try {
+      sseClients[i].write(payload);
+    } catch {
+      sseClients.splice(i, 1);
+    }
   }
 }
 
 export function startPipelineWatcher(channelSlug: string, productionId: string): void {
+  // Clear any existing watcher for this channel before starting a new one
+  const existingInterval = activeWatchers.get(channelSlug);
+  if (existingInterval !== undefined) {
+    clearInterval(existingInterval);
+    activeWatchers.delete(channelSlug);
+  }
+
   const statusPath = join(
     PROJECT_ROOT,
     'projects',
@@ -81,6 +93,7 @@ export function startPipelineWatcher(channelSlug: string, productionId: string):
     const pipeline = activePipelines.get(channelSlug);
     if (!pipeline) {
       clearInterval(interval);
+      activeWatchers.delete(channelSlug);
       return;
     }
 
@@ -109,8 +122,11 @@ export function startPipelineWatcher(channelSlug: string, productionId: string):
 
       if (status.stage === 'complete' || status.stage === 'failed' || status.stage === 'rejected') {
         clearInterval(interval);
+        activeWatchers.delete(channelSlug);
         removePipeline(channelSlug);
       }
     }
   }, 2000);
+
+  activeWatchers.set(channelSlug, interval);
 }

@@ -1,4 +1,4 @@
-import { mkdir, writeFile, readFile, access } from 'fs/promises';
+import { mkdir, writeFile, readFile, access, rename } from 'fs/promises';
 import { dirname } from 'path';
 
 export async function ensureDir(dirPath: string): Promise<void> {
@@ -7,12 +7,18 @@ export async function ensureDir(dirPath: string): Promise<void> {
 
 export async function writeJsonFile(filePath: string, data: unknown): Promise<void> {
   await ensureDir(dirname(filePath));
-  await writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  const tmpPath = `${filePath}.tmp`;
+  await writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+  await rename(tmpPath, filePath);
 }
 
 export async function readJsonFile<T>(filePath: string): Promise<T> {
   const raw = await readFile(filePath, 'utf-8');
-  return JSON.parse(raw) as T;
+  try {
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    throw new Error(`Failed to parse JSON at ${filePath}: ${(err as Error).message}`);
+  }
 }
 
 export async function fileExists(filePath: string): Promise<boolean> {

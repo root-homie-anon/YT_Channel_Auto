@@ -84,8 +84,12 @@ export async function generateThumbnailNBPro(
         break; // success
       } catch (err) {
         const msg = (err as Error).message ?? '';
-        if ((msg.includes('503') || msg.includes('UNAVAILABLE')) && attempt < MAX_RETRIES) {
-          log.warn(`Gemini 503 (attempt ${attempt}/${MAX_RETRIES}) — retrying in ${RETRY_DELAY_MS / 1000}s`);
+        const isRetryable =
+          msg.includes('503') || msg.includes('UNAVAILABLE') ||
+          msg.includes('429') || msg.includes('RATE') ||
+          msg.includes('500') || msg.includes('INTERNAL');
+        if (isRetryable && attempt < MAX_RETRIES) {
+          log.warn(`Gemini transient error (attempt ${attempt}/${MAX_RETRIES}) — retrying in ${RETRY_DELAY_MS / 1000}s`);
           await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
           continue;
         }

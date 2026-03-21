@@ -337,13 +337,14 @@ async function runFromCompilation(
         // Skip to approval
         await updateStage(status, 'approval', outputDir);
         log.info('Sending final video for approval');
-        const messageId = await sendFinalApprovalMessages(config, context.compilationResult, scriptOutput);
+        const messageIds = await sendFinalApprovalMessages(config, context.compilationResult, scriptOutput);
 
         const checkpoint: CheckpointData = {
           type: 'final_approval',
           channelSlug,
           productionId,
-          telegramMessageId: messageId,
+          telegramMessageId: messageIds[messageIds.length - 1],
+          telegramMessageIds: messageIds,
           requestedAt: new Date().toISOString(),
         };
         status.stage = 'awaiting_final_approval';
@@ -364,6 +365,15 @@ async function runFromCompilation(
       config, channelDir, outputDir, manifest, scriptOutput, teaserManifest
     );
     await writeJsonFile(compilationResultPath, context.compilationResult);
+
+    // Delete temporary segment files only after compilation-result.json is safely persisted
+    if (context.compilationResult.segmentPaths?.length) {
+      const { unlink } = await import('fs/promises');
+      for (const segPath of context.compilationResult.segmentPaths) {
+        await unlink(segPath).catch(() => {});
+      }
+      log.info(`Cleaned up ${context.compilationResult.segmentPaths.length} temporary segment files`);
+    }
   } finally {
     releaseCompilationSlot();
   }
@@ -447,13 +457,14 @@ async function runFromCompilation(
 
   await updateStage(status, 'approval', outputDir);
   log.info('Sending final video for approval');
-  const messageId = await sendFinalApprovalMessages(config, context.compilationResult, scriptOutput);
+  const messageIds = await sendFinalApprovalMessages(config, context.compilationResult, scriptOutput);
 
   const checkpoint: CheckpointData = {
     type: 'final_approval',
     channelSlug,
     productionId,
-    telegramMessageId: messageId,
+    telegramMessageId: messageIds[messageIds.length - 1],
+    telegramMessageIds: messageIds,
     requestedAt: new Date().toISOString(),
   };
   status.stage = 'awaiting_final_approval';
@@ -550,7 +561,6 @@ async function runFromPublishing(
           description: scriptOutput.description,
           hashtags: [...scriptOutput.hashtags, '#Shorts'],
           privacy,
-          ...(scheduledTime ? { scheduledTime } : {}),
         });
         log.info(`Short published: ${shortResult.youtubeUrl}`);
         // Store short video ID alongside main video
@@ -706,8 +716,12 @@ async function generateAssets(
       }
 
       // -- Music: skip if already exists --
+      // Also check by manifest index to handle post-rename paths (e.g. slugified song names)
       const musicPath = join(outputDir, 'music', `music-${pad}.wav`);
-      if (await fileExists(musicPath) && manifest.music.some((a) => a.path === musicPath)) {
+      const existingMusicEntry = manifest.music[i];
+      const musicAlreadyDone = (await fileExists(musicPath) && manifest.music.some((a) => a.path === musicPath))
+        || (existingMusicEntry !== undefined && await fileExists(existingMusicEntry.path));
+      if (musicAlreadyDone) {
         log.info(`Segment ${i}: music already exists, skipping`);
       } else {
         // Always use config.musicPrompt — locked per channel, never from content plan
@@ -910,6 +924,12 @@ async function generateAssets(
         '-c', 'copy', voPath,
       ]);
       log.info(`Concatenated ${chunks.length} VO chunks → ${voPath}`);
+      // Clean up part files and concat list now that full-narration.mp3 is written
+      const { unlink: unlinkFile } = await import('fs/promises');
+      for (const partPath of partPaths) {
+        await unlinkFile(partPath).catch(() => {});
+      }
+      await unlinkFile(concatListPath).catch(() => {});
       manifest.voiceover = [{
         id: (await import('node:crypto')).randomUUID(),
         path: voPath,
@@ -1180,7 +1200,7 @@ async function sendFinalApprovalMessages(
   config: ChannelConfig,
   compilation: CompilationResult,
   scriptOutput: ScriptOutput
-): Promise<number> {
+): Promise<number[]> {
   // Send preview clip to Telegram
   const previewPath = join(compilation.videoPath, '..', 'preview-clip.mp4');
   const PREVIEW_SECONDS = 20;
@@ -1218,20 +1238,23 @@ async function sendFinalApprovalMessages(
   ];
   const caption = captionParts.join('\n');
 
+  const messageIds: number[] = [];
   const { stat: statFile } = await import('fs/promises');
   try {
     await statFile(previewPath);
-    await sendVideo(previewPath, caption);
+    const videoMsgId = await sendVideo(previewPath, caption);
+    messageIds.push(videoMsgId);
   } catch {
     log.warn('No preview clip to send');
   }
-  const messageId = await sendApprovalRequest({
+  const approvalMsgId = await sendApprovalRequest({
     videoTitle: scriptOutput.title,
     youtubeUrl: '',
     channelName: config.channel.name,
   });
+  messageIds.push(approvalMsgId);
 
-  return messageId;
+  return messageIds;
 }
 
 async function updateStage(

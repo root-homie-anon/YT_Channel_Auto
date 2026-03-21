@@ -88,7 +88,7 @@ log "Found $TOTAL_WORK pending production(s), $AVAILABLE slot(s) available"
 
 # Process pending productions up to available slots
 LAUNCHED=0
-echo "$PENDING" | jq -c '.[]' | while read -r item; do
+while read -r item; do
   if [ "$LAUNCHED" -ge "$AVAILABLE" ]; then
     log "Slot limit reached ($MAX_CONCURRENT), remaining items will wait"
     break
@@ -332,7 +332,7 @@ CRITICAL RULES:
   ) &
 
   LAUNCHED=$((LAUNCHED + 1))
-done
+done < <(echo "$PENDING" | jq -c '.[]')
 
 # Wait for all background CC sessions to finish
 wait

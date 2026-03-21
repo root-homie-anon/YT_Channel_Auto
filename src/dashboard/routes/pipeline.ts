@@ -19,7 +19,7 @@ import {
   removePipeline,
   addSseClient,
 } from '../state/pipeline-tracker.js';
-import { getConcurrencyStatus, getQueueSnapshot } from '../../services/production-queue.js';
+import { getConcurrencyStatus, getQueueSnapshot, acquirePipelineSlot, releasePipelineSlot } from '../../services/production-queue.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..', '..', '..');
@@ -119,6 +119,11 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
     }
 
     if (resolvedScript) {
+      if (!acquirePipelineSlot()) {
+        res.status(429).json({ error: 'Pipeline concurrency limit reached — try again later' });
+        return;
+      }
+
       await saveScriptOutput(outputDir, resolvedScript);
 
       registerPipeline(slug, productionId, topic);
@@ -126,11 +131,13 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
 
       runPipeline(slug, plan, resolvedScript, productionId)
         .then((ctx) => {
+          releasePipelineSlot();
           // Only remove pipeline if it completed (not paused at checkpoint)
           const stage = ctx.publishResult ? 'complete' : 'checkpoint';
           if (stage === 'complete') removePipeline(slug);
         })
         .catch((err) => {
+          releasePipelineSlot();
           console.error(`Pipeline failed for ${slug}:`, (err as Error).message);
           removePipeline(slug);
         });
@@ -202,13 +209,18 @@ router.post('/:slug/run/:productionId', async (req: Request, res: Response) => {
     const outputDir = join(PROJECT_ROOT, 'projects', slug, 'output', productionId);
     try {
       const currentStatus = await readJsonFile<{ stage: string }>(join(outputDir, 'pipeline-status.json'));
-      const blockStages = ['pending_script', 'asset_generation', 'asset_preview', 'awaiting_asset_approval',
+      const blockStages = ['asset_generation', 'asset_preview', 'awaiting_asset_approval',
         'compilation', 'approval', 'awaiting_final_approval', 'ready', 'publishing', 'complete', 'failed'];
       if (blockStages.includes(currentStatus.stage)) {
         res.status(409).json({ error: `Production already at stage "${currentStatus.stage}" — cannot restart` });
         return;
       }
     } catch { /* no status file, proceed */ }
+
+    if (!acquirePipelineSlot()) {
+      res.status(429).json({ error: 'Pipeline concurrency limit reached — try again later' });
+      return;
+    }
 
     await saveScriptOutput(outputDir, scriptOutput);
 
@@ -231,9 +243,11 @@ router.post('/:slug/run/:productionId', async (req: Request, res: Response) => {
 
     runPipeline(slug, plan, scriptOutput, productionId)
       .then((ctx) => {
+        releasePipelineSlot();
         if (ctx.publishResult) removePipeline(slug);
       })
       .catch((err) => {
+        releasePipelineSlot();
         console.error(`Pipeline failed for ${slug}:`, (err as Error).message);
         removePipeline(slug);
       });
@@ -340,15 +354,22 @@ router.post('/:slug/approve/:productionId', async (req: Request, res: Response) 
     await approveProduction(slug, productionId);
 
     if (checkpointType === 'asset_preview') {
+      if (!acquirePipelineSlot()) {
+        res.status(429).json({ error: 'Pipeline concurrency limit reached — try again later' });
+        return;
+      }
+
       // Asset approval → resume pipeline to compilation
       registerPipeline(slug, productionId, 'Resuming after asset approval');
       startPipelineWatcher(slug, productionId);
 
       resumePipeline(slug, productionId)
         .then((ctx) => {
+          releasePipelineSlot();
           if (ctx.publishResult) removePipeline(slug);
         })
         .catch((err) => {
+          releasePipelineSlot();
           console.error(`Pipeline resume failed for ${slug}:`, (err as Error).message);
           removePipeline(slug);
         });
@@ -432,14 +453,21 @@ router.post('/:slug/schedule/:productionId', async (req: Request, res: Response)
     status.updatedAt = new Date();
     await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
 
+    if (!acquirePipelineSlot()) {
+      res.status(429).json({ error: 'Pipeline concurrency limit reached — try again later' });
+      return;
+    }
+
     registerPipeline(slug, productionId, `Publishing: ${scriptOutput.title}`);
     startPipelineWatcher(slug, productionId);
 
     resumePipeline(slug, productionId)
       .then((ctx) => {
+        releasePipelineSlot();
         if (ctx.publishResult) removePipeline(slug);
       })
       .catch((err) => {
+        releasePipelineSlot();
         console.error(`Publish failed for ${slug}:`, (err as Error).message);
         removePipeline(slug);
       });
@@ -489,14 +517,21 @@ router.post('/:slug/retry/:productionId', async (req: Request, res: Response) =>
     status.updatedAt = new Date();
     await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
 
+    if (!acquirePipelineSlot()) {
+      res.status(429).json({ error: 'Pipeline concurrency limit reached — try again later' });
+      return;
+    }
+
     registerPipeline(slug, productionId, contentPlan.topic);
     startPipelineWatcher(slug, productionId);
 
     resumePipeline(slug, productionId)
       .then((ctx) => {
+        releasePipelineSlot();
         if (ctx.publishResult) removePipeline(slug);
       })
       .catch((err) => {
+        releasePipelineSlot();
         console.error(`Retry failed for ${slug}:`, (err as Error).message);
         removePipeline(slug);
       });

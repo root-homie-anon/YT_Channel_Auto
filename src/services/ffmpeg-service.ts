@@ -883,15 +883,12 @@ export async function compileMusicOnlyVideo(
       }
     }
 
-    // Clean up temporary segment files after duration probing
+    const collectedSegmentPaths: string[] = [];
     if (segmentCount > 1) {
-      const { unlink } = await import('fs/promises');
       for (let i = 0; i < segmentCount; i++) {
         const pad = String(i).padStart(3, '0');
-        const segPath = join(outputDir, `segment-${pad}.mp4`);
-        await unlink(segPath).catch(() => {});
+        collectedSegmentPaths.push(join(outputDir, `segment-${pad}.mp4`));
       }
-      log.info(`Cleaned up ${segmentCount} temporary segment files`);
     }
 
     return {
@@ -901,6 +898,7 @@ export async function compileMusicOnlyVideo(
       resolution,
       fileSizeBytes: stats.size,
       segmentTimestamps: segmentTimestamps.length > 0 ? segmentTimestamps : undefined,
+      segmentPaths: collectedSegmentPaths.length > 0 ? collectedSegmentPaths : undefined,
     };
   } catch (error) {
     if (error instanceof CompilationError) throw error;
@@ -985,7 +983,7 @@ async function trimTrailingSilence(audioPath: string): Promise<void> {
       '-f', 'null', '-',
     ], { maxBuffer: 10 * 1024 * 1024 });
 
-    // Parse silence_start entries — find the last one
+    // Parse silence_start and silence_end entries — find the last period
     const silenceStarts = [...stderr.matchAll(/silence_start:\s*([\d.]+)/g)].map(m => parseFloat(m[1]));
     if (silenceStarts.length === 0) {
       log.debug(`No trailing silence detected in ${audioPath}`);
@@ -993,8 +991,6 @@ async function trimTrailingSilence(audioPath: string): Promise<void> {
     }
 
     const lastSilenceStart = silenceStarts[silenceStarts.length - 1];
-    // Add a small fade-out buffer (0.5s) so it doesn't cut abruptly
-    const trimPoint = lastSilenceStart + 0.5;
 
     // Get total duration to check if silence is actually at the end
     const { stdout: durationOut } = await execFileAsync('ffprobe', [
@@ -1003,11 +999,23 @@ async function trimTrailingSilence(audioPath: string): Promise<void> {
     const totalDuration = parseFloat(durationOut.trim());
     const silenceDuration = totalDuration - lastSilenceStart;
 
-    // Only trim if trailing silence is > 2 seconds
+    // Only trim if trailing silence is > 2 seconds AND it actually reaches the end of the file
     if (silenceDuration < 2) {
       log.debug(`Trailing silence only ${silenceDuration.toFixed(1)}s — skipping trim`);
       return;
     }
+
+    // Guard: skip if last silence period doesn't extend to within 0.5s of the file end
+    // (it may be an internal gap, not actual trailing silence)
+    const silenceEnds = [...stderr.matchAll(/silence_end:\s*([\d.]+)/g)].map(m => parseFloat(m[1]));
+    const lastSilenceEnd = silenceEnds[silenceEnds.length - 1] ?? totalDuration;
+    if (lastSilenceEnd < totalDuration - 0.5) {
+      log.debug(`Last silence ends at ${lastSilenceEnd.toFixed(1)}s but file is ${totalDuration.toFixed(1)}s — not trailing silence, skipping trim`);
+      return;
+    }
+
+    // Add a small fade-out buffer (0.5s) so it doesn't cut abruptly
+    const trimPoint = lastSilenceStart + 0.5;
 
     log.info(`Trimming ${silenceDuration.toFixed(1)}s trailing silence from ${audioPath} (cut at ${trimPoint.toFixed(1)}s)`);
 

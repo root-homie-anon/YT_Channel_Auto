@@ -103,11 +103,14 @@ app.listen(PORT, async () => {
     pendingMessageMap.clear();
     const pending = await listPendingApprovals();
     for (const p of pending) {
-      pendingMessageMap.set(p.telegramMessageId, {
+      const entry = {
         slug: p.channelSlug,
         productionId: p.productionId,
         checkpointType: p.checkpointType,
-      });
+      };
+      for (const msgId of p.telegramMessageIds) {
+        pendingMessageMap.set(msgId, entry);
+      }
     }
   };
 

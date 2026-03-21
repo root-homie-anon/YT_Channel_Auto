@@ -4,15 +4,18 @@ import { readdirSync, existsSync } from 'fs';
 import { PipelineStatus } from '../types/index.js';
 import { readJsonFile, writeJsonFile } from '../utils/file-helpers.js';
 import { createLogger } from '../utils/logger.js';
-import { getChannelDir, getOutputDir } from '../utils/config-loader.js';
+import { getOutputDir, getProjectsDir } from '../utils/config-loader.js';
 
 const log = createLogger('approval-service');
+
+const approvalsInProgress = new Set<string>();
 
 export interface PendingApproval {
   channelSlug: string;
   productionId: string;
   checkpointType: 'asset_preview' | 'final_approval';
   telegramMessageId: number;
+  telegramMessageIds: number[];
   requestedAt: string;
   stage: string;
 }
@@ -21,6 +24,14 @@ export async function approveProduction(
   channelSlug: string,
   productionId: string
 ): Promise<void> {
+  const key = `${channelSlug}:${productionId}`;
+  if (approvalsInProgress.has(key)) {
+    log.info(`Approval already in progress for ${productionId} — ignoring duplicate`);
+    return;
+  }
+  approvalsInProgress.add(key);
+
+  try {
   const outputDir = getOutputDir(channelSlug, productionId);
   const statusPath = join(outputDir, 'pipeline-status.json');
   const status = await readJsonFile<PipelineStatus>(statusPath);
@@ -37,6 +48,9 @@ export async function approveProduction(
   delete status.checkpoint;
   status.updatedAt = new Date();
   await writeJsonFile(statusPath, status);
+  } finally {
+    approvalsInProgress.delete(key);
+  }
 }
 
 export async function rejectProduction(
@@ -62,7 +76,7 @@ export async function rejectProduction(
 }
 
 export async function listPendingApprovals(): Promise<PendingApproval[]> {
-  const projectsDir = join(getChannelDir('_').replace('projects/_', ''), 'projects');
+  const projectsDir = getProjectsDir();
   const pending: PendingApproval[] = [];
 
   let channelDirs: string[];
@@ -97,6 +111,7 @@ export async function listPendingApprovals(): Promise<PendingApproval[]> {
             productionId: run,
             checkpointType: status.checkpoint.type,
             telegramMessageId: status.checkpoint.telegramMessageId,
+            telegramMessageIds: status.checkpoint.telegramMessageIds ?? [status.checkpoint.telegramMessageId],
             requestedAt: status.checkpoint.requestedAt,
             stage: status.stage,
           });
@@ -118,7 +133,7 @@ export interface ReadyProduction {
 }
 
 export async function listReadyProductions(): Promise<ReadyProduction[]> {
-  const projectsDir = join(getChannelDir('_').replace('projects/_', ''), 'projects');
+  const projectsDir = getProjectsDir();
   const ready: ReadyProduction[] = [];
 
   let channelDirs: string[];
@@ -189,6 +204,7 @@ export async function getPendingApproval(
     productionId,
     checkpointType: status.checkpoint.type,
     telegramMessageId: status.checkpoint.telegramMessageId,
+    telegramMessageIds: status.checkpoint.telegramMessageIds ?? [status.checkpoint.telegramMessageId],
     requestedAt: status.checkpoint.requestedAt,
     stage: status.stage,
   };

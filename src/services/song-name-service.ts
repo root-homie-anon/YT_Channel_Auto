@@ -1,9 +1,13 @@
 import { readFile, readdir } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join } from 'path';
+import { dirname, join, resolve } from 'path';
+import { fileURLToPath } from 'url';
 import { requireEnv } from '../utils/env.js';
 import { createLogger } from '../utils/logger.js';
 import { ApiError } from '../errors/index.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = resolve(__dirname, '..', '..');
 
 const log = createLogger('song-name');
 
@@ -106,7 +110,7 @@ Output ONLY the song title.`;
  * Load all existing song names from a channel's completed productions.
  */
 export async function loadExistingSongNames(channelSlug: string): Promise<string[]> {
-  const outputBase = join('projects', channelSlug, 'output');
+  const outputBase = join(PROJECT_ROOT, 'projects', channelSlug, 'output');
   if (!existsSync(outputBase)) return [];
 
   const names: string[] = [];

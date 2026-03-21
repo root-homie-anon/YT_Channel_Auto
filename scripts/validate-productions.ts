@@ -250,7 +250,10 @@ async function applyFix(issue: ValidationIssue): Promise<boolean> {
 }
 
 async function main(): Promise<void> {
-  const channels = ['ch-strange-universe', 'ch-liminal-synth'];
+  const projectsDir = join(PROJECT_ROOT, 'projects');
+  const channels = (await readdir(projectsDir, { withFileTypes: true }))
+    .filter((d) => d.isDirectory() && d.name.startsWith('ch-'))
+    .map((d) => d.name);
   const allIssues: ValidationIssue[] = [];
 
   for (const channelSlug of channels) {

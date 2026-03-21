@@ -1,4 +1,5 @@
 import { readFile } from 'fs/promises';
+import { existsSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -44,6 +45,10 @@ export async function loadSharedDescriptionFormula(): Promise<string> {
   }
 }
 
+export function getProjectsDir(): string {
+  return join(PROJECT_ROOT, 'projects');
+}
+
 export function getChannelDir(channelSlug: string): string {
   return join(PROJECT_ROOT, 'projects', channelSlug);
 }
@@ -74,5 +79,29 @@ function validateConfig(config: ChannelConfig, configPath: string): void {
   }
   if (!config.frameworks?.script && config.channel.format !== 'music-only') {
     throw new ConfigError('Missing frameworks.script path', configPath);
+  }
+
+  // Verify framework files actually exist on disk
+  const channelDir = dirname(configPath);
+  const isMusicOnly = config.channel.format === 'music-only';
+  const includesShorts = config.channel.format === 'long+short' || config.channel.format === 'short';
+
+  const frameworksToCheck: Array<[keyof typeof config.frameworks, boolean]> = [
+    ['script', !isMusicOnly],
+    ['image', true],
+    ['music', true],
+    ['thumbnail', !isMusicOnly],
+    ['title', !isMusicOnly],
+    ['teaser', includesShorts],
+  ];
+
+  for (const [key, required] of frameworksToCheck) {
+    const frameworkPath = config.frameworks?.[key];
+    if (!required) continue;
+    if (!frameworkPath) continue; // already caught above for required fields
+    const fullPath = join(channelDir, frameworkPath);
+    if (!existsSync(fullPath)) {
+      throw new ConfigError(`Framework file not found: ${frameworkPath}`, fullPath);
+    }
   }
 }

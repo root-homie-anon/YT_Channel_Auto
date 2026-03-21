@@ -178,6 +178,7 @@ export interface CompilationResult {
   fileSizeBytes: number;
   teaserVideoPath?: string | undefined;
   segmentTimestamps?: SegmentTimestamp[] | undefined;
+  segmentPaths?: string[] | undefined;
 }
 
 // === Publishing Types ===
@@ -270,6 +271,7 @@ export interface CheckpointData {
   channelSlug: string;
   productionId: string;
   telegramMessageId: number;
+  telegramMessageIds?: number[];
   requestedAt: string;
 }
 
