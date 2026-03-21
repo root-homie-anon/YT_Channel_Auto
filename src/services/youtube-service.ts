@@ -1,6 +1,10 @@
-import { readFile } from 'fs/promises';
+import { readFile, stat as statFile } from 'fs/promises';
 import { google, youtube_v3 } from 'googleapis';
 import { createReadStream } from 'fs';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 import { ApiError } from '../errors/index.js';
 import { PublishRequest, PublishResult } from '../types/index.js';
@@ -115,10 +119,24 @@ export async function uploadVideo(
     // Skip if no thumbnail path provided (e.g. music-only channels)
     if (request.thumbnailPath) {
       try {
+        // YouTube limit is 2MB — resize if needed
+        const thumbStat = await statFile(request.thumbnailPath);
+        let thumbPath = request.thumbnailPath;
+        if (thumbStat.size > 2_000_000) {
+          log.info(`Thumbnail too large (${(thumbStat.size / 1024 / 1024).toFixed(1)}MB) — resizing to 1280x720`);
+          const resizedPath = request.thumbnailPath.replace(/\.(png|jpg|jpeg)$/i, '-yt.jpg');
+          await execFileAsync('ffmpeg', [
+            '-i', request.thumbnailPath,
+            '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:-1:-1:color=black',
+            '-q:v', '2',
+            '-y', resizedPath,
+          ]);
+          thumbPath = resizedPath;
+        }
         await youtube.thumbnails.set({
           videoId,
           media: {
-            body: createReadStream(request.thumbnailPath),
+            body: createReadStream(thumbPath),
           },
         });
         log.info(`Thumbnail set for video: ${videoId}`);
