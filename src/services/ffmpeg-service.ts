@@ -197,8 +197,8 @@ function buildKenBurnsCrossfadeFilter(
     const totalFrames = Math.round(duration * 30);
 
     const zoomIn = i % 2 === 0;
-    const zoomStart = zoomIn ? '1' : '1.2';
-    const zoomEnd = zoomIn ? '1.2' : '1';
+    const zoomStart = zoomIn ? '1.05' : '1.15';
+    const zoomEnd = zoomIn ? '1.15' : '1.05';
     const zoomExpr = `${zoomStart}+(${zoomEnd}-${zoomStart})*on/${totalFrames}`;
     const xExpr = zoomIn
       ? `iw/2-(iw/zoom/2)+on/${totalFrames}*20`

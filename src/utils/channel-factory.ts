@@ -91,14 +91,22 @@ const MUSIC_ONLY_TEMPLATE_MAP: Record<string, string> = {
   'description-formula.md': 'description-formula-music-only.md',
 };
 
+// Narrated channels (long, short, long+short) use the narrated description template
+const NARRATED_TEMPLATE_MAP: Record<string, string> = {
+  'description-formula.md': 'description-formula-narrated-template.md',
+};
+
 export function scaffoldFrameworks(frameworksDir: string, format: ChannelFormat): void {
   mkdirSync(frameworksDir, { recursive: true });
   for (const file of FRAMEWORK_FILES[format]) {
     const destPath = join(frameworksDir, file);
-    // Use music-only specific template if available
-    const templateFile = format === 'music-only' && MUSIC_ONLY_TEMPLATE_MAP[file]
-      ? MUSIC_ONLY_TEMPLATE_MAP[file]
-      : file;
+    // Use format-specific template if available
+    let templateFile = file;
+    if (format === 'music-only' && MUSIC_ONLY_TEMPLATE_MAP[file]) {
+      templateFile = MUSIC_ONLY_TEMPLATE_MAP[file];
+    } else if (format !== 'music-only' && NARRATED_TEMPLATE_MAP[file]) {
+      templateFile = NARRATED_TEMPLATE_MAP[file];
+    }
     const templatePath = join(FRAMEWORK_TEMPLATES_DIR, templateFile);
     if (existsSync(templatePath)) {
       copyFileSync(templatePath, destPath);
