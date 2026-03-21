@@ -584,6 +584,22 @@ router.post('/:slug/retry/:productionId', async (req: Request, res: Response) =>
 
     const contentPlan = await readJsonFile<{ topic: string }>(join(outputDir, 'content-plan.json'));
 
+    // If the production never got past pending_script (no script-output.json),
+    // reset to pending_script so the watcher picks it up for agent processing.
+    const scriptOutputExists = existsSync(join(outputDir, 'script-output.json'));
+    if (!scriptOutputExists) {
+      status.stage = 'pending_script';
+      delete status.error;
+      status.updatedAt = new Date();
+      await writeJsonFile(join(outputDir, 'pipeline-status.json'), status);
+
+      registerPipeline(slug, productionId, contentPlan.topic);
+      startPipelineWatcher(slug, productionId);
+
+      res.json({ status: 'pending_script', productionId, message: 'No script found — re-queued for agent processing' });
+      return;
+    }
+
     // Reset status to allow resume
     status.stage = 'asset_generation';
     delete status.error;
