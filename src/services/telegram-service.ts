@@ -1,6 +1,7 @@
 import { ApiError } from '../errors/index.js';
-import { requireEnv } from '../utils/env.js';
+import { requireEnv, ENV } from '../utils/env.js';
 import { createLogger } from '../utils/logger.js';
+import { fetchWithTimeout } from '../utils/fetch-helpers.js';
 
 const log = createLogger('telegram-service');
 
@@ -35,7 +36,7 @@ export async function sendApprovalRequest(request: ApprovalRequest): Promise<num
   log.info(`Sending approval request for "${request.videoTitle}"`);
 
   try {
-    const response = await fetch(`${TELEGRAM_API_BASE}${botToken}/sendMessage`, {
+    const response = await fetchWithTimeout(`${TELEGRAM_API_BASE}${botToken}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -75,15 +76,20 @@ export async function pollForApproval(messageId: number, timeoutMinutes = 60): P
 
   const deadline = Date.now() + timeoutMinutes * 60 * 1000;
   let lastUpdateId = 0;
+  const ownerId = ENV.TELEGRAM_OWNER_ID;
+  if (!ownerId) {
+    log.warn('TELEGRAM_OWNER_ID not set — approvals accepted from any chat member');
+  }
 
   log.info(`Polling for approval (timeout: ${timeoutMinutes}m)`);
 
   while (Date.now() < deadline) {
     try {
       const allowedUpdates = encodeURIComponent(JSON.stringify(['message', 'message_reaction']));
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${TELEGRAM_API_BASE}${botToken}/getUpdates?offset=${lastUpdateId + 1}&timeout=30&allowed_updates=${allowedUpdates}`,
-        { method: 'GET' }
+        { method: 'GET' },
+        45_000
       );
 
       if (!response.ok) continue;
@@ -100,7 +106,8 @@ export async function pollForApproval(messageId: number, timeoutMinutes = 60): P
         if (
           msg &&
           String(msg.chat.id) === chatId &&
-          msg.reply_to_message?.message_id === messageId
+          msg.reply_to_message?.message_id === messageId &&
+          (!ownerId || String(msg.from?.id) === ownerId)
         ) {
           const text = msg.text?.toLowerCase().trim();
           if (text === '/approve') {
@@ -118,7 +125,8 @@ export async function pollForApproval(messageId: number, timeoutMinutes = 60): P
         if (
           reaction &&
           String(reaction.chat.id) === chatId &&
-          reaction.message_id === messageId
+          reaction.message_id === messageId &&
+          (!ownerId || String(reaction.user?.id) === ownerId)
         ) {
           const emoji = getReactionEmoji(reaction.new_reaction);
           if (emoji === '👍') {
@@ -146,7 +154,7 @@ export async function sendTextMessage(text: string): Promise<number> {
   const botToken = requireEnv('TELEGRAM_BOT_TOKEN');
   const chatId = requireEnv('TELEGRAM_CHAT_ID');
 
-  const response = await fetch(`${TELEGRAM_API_BASE}${botToken}/sendMessage`, {
+  const response = await fetchWithTimeout(`${TELEGRAM_API_BASE}${botToken}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -230,11 +238,11 @@ async function sendFile(
 
   const body = Buffer.concat(parts);
 
-  const response = await fetch(`${TELEGRAM_API_BASE}${botToken}/${method}`, {
+  const response = await fetchWithTimeout(`${TELEGRAM_API_BASE}${botToken}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
     body,
-  });
+  }, 120_000);
 
   if (!response.ok) {
     const errorBody = await response.text();
@@ -250,10 +258,23 @@ async function sendFile(
   return result.result.message_id;
 }
 
+// === Listener Health ===
+
+interface TelegramListenerHealth {
+  alive: boolean;
+  lastPollAt: Date | null;
+}
+
+let _telegramListenerHealth: TelegramListenerHealth = { alive: false, lastPollAt: null };
+
+export function getTelegramListenerHealth(): TelegramListenerHealth {
+  return { ..._telegramListenerHealth };
+}
+
 /**
  * Background listener that polls Telegram for /approve and /reject replies.
  * Matches replies against pending checkpoints and triggers approval/rejection.
- * No timeout — runs as long as the process is alive.
+ * No timeout — runs as long as the process is alive. Auto-restarts on crash.
  */
 export function startTelegramApprovalListener(
   onApprove: (messageId: number) => Promise<void>,
@@ -271,14 +292,19 @@ export function startTelegramApprovalListener(
   }
 
   let lastUpdateId = 0;
+  const listenOwnerId = ENV.TELEGRAM_OWNER_ID;
+  if (!listenOwnerId) {
+    log.warn('TELEGRAM_OWNER_ID not set — approvals accepted from any chat member');
+  }
   log.info('Telegram approval listener started (no timeout)');
 
   const poll = async (): Promise<void> => {
     try {
       const allowedUpdates = encodeURIComponent(JSON.stringify(['message', 'message_reaction']));
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${TELEGRAM_API_BASE}${botToken}/getUpdates?offset=${lastUpdateId + 1}&timeout=30&allowed_updates=${allowedUpdates}`,
-        { method: 'GET' }
+        { method: 'GET' },
+        45_000
       );
 
       if (!response.ok) return;
@@ -298,7 +324,8 @@ export function startTelegramApprovalListener(
           msg &&
           String(msg.chat.id) === chatId &&
           msg.reply_to_message?.message_id &&
-          trackedIds.includes(msg.reply_to_message.message_id)
+          trackedIds.includes(msg.reply_to_message.message_id) &&
+          (!listenOwnerId || String(msg.from?.id) === listenOwnerId)
         ) {
           const text = msg.text?.toLowerCase().trim();
           const replyToId = msg.reply_to_message.message_id;
@@ -322,7 +349,8 @@ export function startTelegramApprovalListener(
         if (
           reaction &&
           String(reaction.chat.id) === chatId &&
-          trackedIds.includes(reaction.message_id)
+          trackedIds.includes(reaction.message_id) &&
+          (!listenOwnerId || String(reaction.user?.id) === listenOwnerId)
         ) {
           const emoji = getReactionEmoji(reaction.new_reaction);
           if (emoji === '👍') {
@@ -343,14 +371,30 @@ export function startTelegramApprovalListener(
     }
   };
 
+  let _lastPollAt: Date | null = null;
+
+  const wrappedPoll = async (): Promise<void> => {
+    await poll();
+    _lastPollAt = new Date();
+    _telegramListenerHealth = { alive: true, lastPollAt: _lastPollAt };
+  };
+
   const loop = async (): Promise<void> => {
     while (true) {
-      await poll();
+      await wrappedPoll();
       await new Promise((resolve) => setTimeout(resolve, 5000));
     }
   };
 
-  loop().catch((err) => log.warn(`Telegram listener stopped: ${(err as Error).message}`));
+  const startLoop = (): void => {
+    loop().catch((err) => {
+      log.error(`Telegram listener crashed: ${(err as Error).message}. Restarting in 30s...`);
+      _telegramListenerHealth = { alive: false, lastPollAt: _telegramListenerHealth.lastPollAt };
+      setTimeout(startLoop, 30_000);
+    });
+  };
+
+  startLoop();
 }
 
 interface ReactionType {
@@ -362,11 +406,13 @@ interface TelegramUpdate {
   update_id: number;
   message?: {
     chat: { id: number };
+    from?: { id: number };
     text?: string;
     reply_to_message?: { message_id: number };
   };
   message_reaction?: {
     chat: { id: number };
+    user?: { id: number };
     message_id: number;
     old_reaction: ReactionType[];
     new_reaction: ReactionType[];

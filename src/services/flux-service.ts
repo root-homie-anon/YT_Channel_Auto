@@ -8,6 +8,7 @@ import { requireEnv } from '../utils/env.js';
 import { ensureDir } from '../utils/file-helpers.js';
 import { createLogger } from '../utils/logger.js';
 import { withRetry } from '../utils/retry.js';
+import { fetchWithTimeout } from '../utils/fetch-helpers.js';
 
 const log = createLogger('flux-service');
 
@@ -30,7 +31,7 @@ export async function generateImage(options: FluxGenerateOptions): Promise<Asset
   try {
     // Step 1: Submit generation request (with retry for transient errors)
     const submitResult = await withRetry('flux-submit', async () => {
-      const submitResponse = await fetch(apiUrl, {
+      const submitResponse = await fetchWithTimeout(apiUrl, {
         method: 'POST',
         headers: {
           'x-key': apiKey,
@@ -64,7 +65,7 @@ export async function generateImage(options: FluxGenerateOptions): Promise<Asset
 
     // Step 3: Download the image (with retry — signed URL valid for 10 min)
     const imageBuffer = await withRetry('flux-download', async () => {
-      const imageResponse = await fetch(sampleUrl);
+      const imageResponse = await fetchWithTimeout(sampleUrl, {}, 120_000);
       if (!imageResponse.ok) {
         throw new ApiError('Failed to download generated image from BFL', 'flux', imageResponse.status);
       }
@@ -97,7 +98,7 @@ async function pollForResult(pollingUrl: string): Promise<string> {
   for (let i = 0; i < MAX_POLLS; i++) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
 
-    const response = await fetch(pollingUrl);
+    const response = await fetchWithTimeout(pollingUrl, {}, 30_000);
     if (!response.ok) {
       throw new ApiError(
         `BFL polling failed: ${response.status}`,

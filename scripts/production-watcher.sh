@@ -25,6 +25,12 @@ mkdir -p "$(dirname "$LOG_FILE")" "$SLOT_DIR"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"; }
 
+# Rotate log if too large (5MB)
+MAX_LOG_SIZE=5242880
+if [ -f "$LOG_FILE" ] && [ "$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)" -gt "$MAX_LOG_SIZE" ]; then
+  mv "$LOG_FILE" "${LOG_FILE}.old"
+fi
+
 # Prevent overlapping watcher runs
 if [ -f "$LOCK_FILE" ]; then
   LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null)
@@ -97,6 +103,22 @@ while read -r item; do
   SLUG=$(echo "$item" | jq -r '.slug')
   PROD_ID=$(echo "$item" | jq -r '.productionId')
   TOPIC=$(echo "$item" | jq -r '.topic')
+
+  # Sanitize user-sourced values before interpolating into shell heredoc prompts.
+  # Strip backticks, $(...), ${...}, double-quotes, and backslashes to prevent injection.
+  SLUG=$(echo "$SLUG" | sed 's/[`$"\\]//g')
+  PROD_ID=$(echo "$PROD_ID" | sed 's/[`$"\\]//g')
+  TOPIC=$(echo "$TOPIC" | sed 's/[`$"\\]//g')
+
+  # Validate SLUG and PROD_ID match expected formats before using in file paths
+  if [[ ! "$SLUG" =~ ^ch-[a-z0-9-]+$ ]]; then
+    log "Invalid slug format: $SLUG, skipping"
+    continue
+  fi
+  if [[ ! "$PROD_ID" =~ ^[0-9]{8}-[0-9]{6}-[a-z0-9]{4}$ ]]; then
+    log "Invalid productionId format: $PROD_ID, skipping"
+    continue
+  fi
 
   # Skip if this specific production is already being processed
   if [ -f "$SLOT_DIR/slot-${SLUG}-${PROD_ID}" ]; then

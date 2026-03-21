@@ -1,9 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { createServer, IncomingMessage, ServerResponse } from 'http';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { writeJsonFile, readJsonFile } from '../../utils/file-helpers.js';
+import { createLogger } from '../../utils/logger.js';
+
+const log = createLogger('routes/oauth');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..', '..', '..');
@@ -17,9 +21,24 @@ const SCOPES = [
 
 const router = Router();
 
-// Pending OAuth states: channelSlug -> resolve function
-const pendingFlows = new Map<string, (code: string) => void>();
+// Pending OAuth states: nonce -> { slug, resolve }
+const pendingFlows = new Map<string, { slug: string; resolve: (code: string) => void }>();
 let callbackServer: ReturnType<typeof createServer> | null = null;
+
+const CALLBACK_SERVER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+function closeCallbackServer(): void {
+  if (callbackServer) {
+    callbackServer.close(() => {
+      console.log('OAuth callback server closed');
+    });
+    callbackServer = null;
+    // Reject any still-pending flows (server closed before callback)
+    for (const [nonce] of pendingFlows) {
+      pendingFlows.delete(nonce);
+    }
+  }
+}
 
 function ensureCallbackServer(): void {
   if (callbackServer) return;
@@ -32,9 +51,9 @@ function ensureCallbackServer(): void {
       const state = url.searchParams.get('state');
 
       if (code && state && pendingFlows.has(state)) {
-        const resolver = pendingFlows.get(state)!;
+        const entry = pendingFlows.get(state)!;
         pendingFlows.delete(state);
-        resolver(code);
+        entry.resolve(code);
 
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(`
@@ -45,6 +64,9 @@ function ensureCallbackServer(): void {
             </div>
           </body></html>
         `);
+
+        // Close server once callback received — no longer needed
+        setImmediate(closeCallbackServer);
       } else {
         res.writeHead(400, { 'Content-Type': 'text/plain' });
         res.end('Invalid or expired OAuth callback');
@@ -66,6 +88,9 @@ function ensureCallbackServer(): void {
       console.error('OAuth callback server error:', err);
     }
   });
+
+  // Auto-close after 5 minutes if no callback received
+  setTimeout(closeCallbackServer, CALLBACK_SERVER_TIMEOUT_MS);
 }
 
 // Start OAuth flow — returns the auth URL
@@ -97,6 +122,7 @@ router.post('/:slug/oauth/start', async (req: Request, res: Response) => {
 
     ensureCallbackServer();
 
+    const nonce = randomUUID();
     const authUrl =
       `https://accounts.google.com/o/oauth2/v2/auth?` +
       `client_id=${encodeURIComponent(clientId)}&` +
@@ -105,11 +131,11 @@ router.post('/:slug/oauth/start', async (req: Request, res: Response) => {
       `scope=${encodeURIComponent(SCOPES)}&` +
       `access_type=offline&` +
       `prompt=consent&` +
-      `state=${encodeURIComponent(slug)}`;
+      `state=${encodeURIComponent(nonce)}`;
 
     // Set up a promise that resolves when the callback is hit
     const codePromise = new Promise<string>((resolveCode) => {
-      pendingFlows.set(slug, resolveCode);
+      pendingFlows.set(nonce, { slug, resolve: resolveCode });
     });
 
     // Don't block — return the URL immediately
@@ -154,9 +180,9 @@ router.post('/:slug/oauth/start', async (req: Request, res: Response) => {
       },
     });
 
-    console.log(`OAuth tokens saved for ${slug}`);
+    log.info(`OAuth tokens saved for ${slug}`);
   } catch (err) {
-    console.error('OAuth flow error:', (err as Error).message);
+    log.error(`OAuth flow error: ${(err as Error).message}`);
   }
 });
 
@@ -176,7 +202,8 @@ router.get('/:slug/oauth/status', async (req: Request, res: Response) => {
 
     res.json({ hasCredentials: true, hasTokens });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`OAuth status check failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

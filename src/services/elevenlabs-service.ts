@@ -8,6 +8,7 @@ import { requireEnv } from '../utils/env.js';
 import { ensureDir } from '../utils/file-helpers.js';
 import { createLogger } from '../utils/logger.js';
 import { withRetry } from '../utils/retry.js';
+import { fetchWithTimeout } from '../utils/fetch-helpers.js';
 
 const log = createLogger('elevenlabs-service');
 
@@ -41,7 +42,7 @@ export async function generateVoiceover(options: VoiceoverOptions): Promise<Asse
 
   try {
     const audioBuffer = await withRetry('elevenlabs-tts', async () => {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${ELEVENLABS_API_BASE}/text-to-speech/${voiceId}`,
         {
           method: 'POST',
@@ -59,7 +60,8 @@ export async function generateVoiceover(options: VoiceoverOptions): Promise<Asse
               speed,
             },
           }),
-        }
+        },
+        60_000
       );
 
       if (!response.ok) {

@@ -7,6 +7,7 @@ import { AssetFile } from '../types/index.js';
 import { requireEnv } from '../utils/env.js';
 import { ensureDir } from '../utils/file-helpers.js';
 import { createLogger } from '../utils/logger.js';
+import { fetchWithTimeout } from '../utils/fetch-helpers.js';
 
 const log = createLogger('replicate-audio');
 
@@ -58,7 +59,7 @@ export async function generateMusic(options: MusicGenerateOptions): Promise<Asse
       input.seed = seed;
     }
 
-    const startResponse = await fetch(`${REPLICATE_BASE}/models/${MODEL_VERSION}/predictions`, {
+    const startResponse = await fetchWithTimeout(`${REPLICATE_BASE}/models/${MODEL_VERSION}/predictions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiToken}`,
@@ -82,7 +83,7 @@ export async function generateMusic(options: MusicGenerateOptions): Promise<Asse
     // Step 2: Poll for completion
     const result = await pollForCompletion(apiToken, prediction.id);
 
-    // Step 3: Download audio
+    // Step 3: Download audio (3 attempts with 5s delay — signed URL stays valid for minutes)
     const audioUrl = result.output;
     if (!audioUrl) {
       throw new ApiError(
@@ -91,13 +92,24 @@ export async function generateMusic(options: MusicGenerateOptions): Promise<Asse
       );
     }
 
-    const audioResponse = await fetch(audioUrl);
-    if (!audioResponse.ok) {
-      throw new ApiError('Failed to download generated audio', 'replicate', audioResponse.status);
+    const DOWNLOAD_MAX_ATTEMPTS = 3;
+    const DOWNLOAD_RETRY_DELAY_MS = 5_000;
+    let audioBuffer: Buffer | undefined;
+    for (let attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS; attempt++) {
+      const audioResponse = await fetchWithTimeout(audioUrl, {}, 120_000);
+      if (audioResponse.ok) {
+        audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
+        break;
+      }
+      const errMsg = `Download attempt ${attempt}/${DOWNLOAD_MAX_ATTEMPTS} failed (HTTP ${audioResponse.status})`;
+      if (attempt < DOWNLOAD_MAX_ATTEMPTS) {
+        log.warn(`${errMsg} — retrying in ${DOWNLOAD_RETRY_DELAY_MS / 1000}s`);
+        await new Promise((resolve) => setTimeout(resolve, DOWNLOAD_RETRY_DELAY_MS));
+      } else {
+        throw new ApiError('Failed to download generated audio after 3 attempts', 'replicate', audioResponse.status);
+      }
     }
-
-    const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
-    await writeFile(outputPath, audioBuffer);
+    await writeFile(outputPath, audioBuffer!);
 
     // Extract seed from prediction logs or input for reproducibility
     const usedSeed = result.input?.seed ?? seed ?? 'random';
@@ -142,9 +154,9 @@ async function pollForCompletion(
   for (let i = 0; i < MAX_POLLS; i++) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
 
-    const response = await fetch(`${REPLICATE_BASE}/predictions/${predictionId}`, {
+    const response = await fetchWithTimeout(`${REPLICATE_BASE}/predictions/${predictionId}`, {
       headers: { 'Authorization': `Bearer ${apiToken}` },
-    });
+    }, 30_000);
 
     if (!response.ok) {
       throw new ApiError(

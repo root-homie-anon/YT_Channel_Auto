@@ -6,6 +6,19 @@ import { ApiError } from '../errors/index.js';
 import { PublishRequest, PublishResult } from '../types/index.js';
 import { createLogger } from '../utils/logger.js';
 
+const UPLOAD_RETRY_DELAYS_MS = [5_000, 15_000, 45_000];
+
+function isTransientError(err: unknown): boolean {
+  const msg = (err as Error).message ?? '';
+  const code = (err as NodeJS.ErrnoException).code ?? '';
+  if (code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'ECONNABORTED') return true;
+  if (msg.includes('ECONNRESET') || msg.includes('ETIMEDOUT')) return true;
+  // 5xx from googleapis error response
+  const status = (err as { status?: number }).status ?? (err as { code?: number }).code;
+  if (typeof status === 'number' && status >= 500 && status < 600) return true;
+  return false;
+}
+
 const log = createLogger('youtube-service');
 
 interface OAuthFile {
@@ -55,30 +68,45 @@ export async function uploadVideo(
     const auth = await getAuthClient(oauthPath);
     const youtube = google.youtube({ version: 'v3', auth });
 
-    // Upload video
-    const uploadResponse = await youtube.videos.insert({
-      part: ['snippet', 'status'],
-      requestBody: {
-        snippet: {
-          title: request.title,
-          description: buildDescription(request.description, request.hashtags),
-          tags: request.hashtags.map((h) => h.replace(/^#/, '')),
-          categoryId: '22', // People & Blogs (default)
-        },
-        status: {
-          privacyStatus: request.privacy,
-          publishAt: request.scheduledTime?.toISOString(),
-          selfDeclaredMadeForKids: false,
-        },
-      },
-      media: {
-        body: createReadStream(request.videoPath),
-      },
-    } as youtube_v3.Params$Resource$Videos$Insert);
+    // Upload video — 3 attempts with exponential backoff on transient errors
+    let videoId: string | null | undefined;
+    let lastUploadError: unknown;
+    for (let attempt = 0; attempt <= UPLOAD_RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        const uploadResponse = await youtube.videos.insert({
+          part: ['snippet', 'status'],
+          requestBody: {
+            snippet: {
+              title: request.title,
+              description: buildDescription(request.description, request.hashtags),
+              tags: request.hashtags.map((h) => h.replace(/^#/, '')),
+              categoryId: '22', // People & Blogs (default)
+            },
+            status: {
+              privacyStatus: request.privacy,
+              publishAt: request.scheduledTime?.toISOString(),
+              selfDeclaredMadeForKids: false,
+            },
+          },
+          media: {
+            body: createReadStream(request.videoPath),
+          },
+        } as youtube_v3.Params$Resource$Videos$Insert);
+        videoId = uploadResponse.data.id;
+        break;
+      } catch (uploadErr) {
+        lastUploadError = uploadErr;
+        if (!isTransientError(uploadErr) || attempt >= UPLOAD_RETRY_DELAYS_MS.length) {
+          throw uploadErr;
+        }
+        const delayMs = UPLOAD_RETRY_DELAYS_MS[attempt];
+        log.warn(`YouTube upload attempt ${attempt + 1} failed (transient), retrying in ${delayMs / 1000}s: ${(uploadErr as Error).message}`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
 
-    const videoId = uploadResponse.data.id;
     if (!videoId) {
-      throw new ApiError('YouTube upload returned no video ID', 'youtube');
+      throw lastUploadError ?? new ApiError('YouTube upload returned no video ID', 'youtube');
     }
 
     log.info(`Video uploaded: ${videoId}`);

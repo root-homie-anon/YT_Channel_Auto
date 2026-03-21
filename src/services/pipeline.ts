@@ -3,7 +3,7 @@ import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { promisify } from 'util';
 
-import { PipelineError } from '../errors/index.js';
+import { PipelineError, ConfigError } from '../errors/index.js';
 import {
   AssetManifest,
   ChannelConfig,
@@ -90,6 +90,11 @@ export async function runPipeline(
     await writeJsonFile(join(outputDir, 'content-plan.json'), contentPlan);
     await writeJsonFile(join(outputDir, 'script-output.json'), scriptOutput);
 
+    // Warn if description is missing or suspiciously short — don't block, just surface it
+    if (!scriptOutput.description || scriptOutput.description.trim().length < 10) {
+      log.warn(`Description is empty or very short (${scriptOutput.description?.trim().length ?? 0} chars) — video will upload with a minimal description`);
+    }
+
     // Stage: Asset Generation
     await updateStage(status, 'asset_generation', outputDir);
     log.info('Starting asset generation');
@@ -104,7 +109,7 @@ export async function runPipeline(
       } else {
         await updateStage(status, 'asset_preview', outputDir);
         log.info('Sending asset previews to Telegram for approval');
-        const messageId = await sendAssetPreviewMessages(config, context.assetManifest, contentPlan);
+        const messageId = await sendAssetPreviewMessages(config, context.assetManifest, contentPlan, assetResult.staticDegradedSegments);
 
         // Write checkpoint and pause — pipeline resumes on approval
         const checkpoint: CheckpointData = {
@@ -534,10 +539,22 @@ async function runFromPublishing(
       }
     }
 
+    // YouTube title limit is 100 characters. Truncate at last word boundary before 97 chars
+    // and append ellipsis to avoid silent rejection or truncation by the API.
+    const rawTitle = scriptOutput.title;
+    const safeTitle = rawTitle.length > 100
+      ? (rawTitle.slice(0, 97).lastIndexOf(' ') > 60
+        ? rawTitle.slice(0, rawTitle.slice(0, 97).lastIndexOf(' ')) + '...'
+        : rawTitle.slice(0, 97) + '...')
+      : rawTitle;
+    if (safeTitle !== rawTitle) {
+      log.warn(`Title truncated from ${rawTitle.length} to ${safeTitle.length} chars: "${safeTitle}"`);
+    }
+
     const ytResult = await uploadVideo(oauthPath, {
       videoPath: compilation.videoPath,
       thumbnailPath: thumbnailForUpload,
-      title: scriptOutput.title,
+      title: safeTitle,
       description: scriptOutput.description,
       hashtags: scriptOutput.hashtags,
       privacy,
@@ -602,6 +619,7 @@ async function runFromPublishing(
 interface AssetGenerationResult {
   manifest: AssetManifest;
   teaserManifest?: AssetManifest | undefined;
+  staticDegradedSegments?: number[];
 }
 
 async function generateAssets(
@@ -639,6 +657,7 @@ async function generateAssets(
     const totalDuration = contentPlan.targetDurationSeconds;
     const segmentDuration = Math.floor(totalDuration / segmentCount);
     const musicDuration = 190; // Always generate max-length tracks; segments are trimmed at compile
+    const staticDegradedSegments: number[] = [];
 
     // Validate prompt arrays match segment count
     if (prompts.imagePrompts.length < segmentCount) {
@@ -694,24 +713,39 @@ async function generateAssets(
       if (await fileExists(animPath) && manifest.animations.some((a) => a.path === animPath)) {
         log.info(`Segment ${i}: animation already exists, skipping`);
       } else if (process.env.RUNWAY_API_KEY) {
-        try {
-          const imageAsset = manifest.images.find((a) => a.path === imagePath)!;
-          const imageData = await readFile(imageAsset.path);
-          const base64 = imageData.toString('base64');
-          const dataUri = `data:image/png;base64,${base64}`;
-          const animPrompt = prompts.animationPrompts[i];
+        const ANIM_RETRY_ATTEMPTS = 2;
+        const ANIM_RETRY_DELAY_MS = 10_000;
+        let animSuccess = false;
+        for (let attempt = 1; attempt <= ANIM_RETRY_ATTEMPTS; attempt++) {
+          try {
+            const imageAsset = manifest.images.find((a) => a.path === imagePath)!;
+            const imageData = await readFile(imageAsset.path);
+            const base64 = imageData.toString('base64');
+            const dataUri = `data:image/png;base64,${base64}`;
+            const animPrompt = prompts.animationPrompts[i];
 
-          const animAsset = await generateAnimation({
-            imageUrl: dataUri,
-            prompt: animPrompt,
-            durationSeconds: 10,
-            outputPath: animPath,
-          });
-          const existIdx = manifest.animations.findIndex((a) => a.path === animPath);
-          if (existIdx >= 0) manifest.animations[existIdx] = animAsset;
-          else manifest.animations.push(animAsset);
-        } catch (err) {
-          log.warn(`Animation ${i} failed (non-fatal): ${(err as Error).message}`);
+            const animAsset = await generateAnimation({
+              imageUrl: dataUri,
+              prompt: animPrompt,
+              durationSeconds: 10,
+              outputPath: animPath,
+            });
+            const existIdx = manifest.animations.findIndex((a) => a.path === animPath);
+            if (existIdx >= 0) manifest.animations[existIdx] = animAsset;
+            else manifest.animations.push(animAsset);
+            animSuccess = true;
+            break;
+          } catch (err) {
+            if (attempt < ANIM_RETRY_ATTEMPTS) {
+              log.warn(`Animation ${i} attempt ${attempt} failed, retrying in ${ANIM_RETRY_DELAY_MS / 1000}s: ${(err as Error).message}`);
+              await new Promise((resolve) => setTimeout(resolve, ANIM_RETRY_DELAY_MS));
+            } else {
+              log.warn(`Animation ${i} failed after ${ANIM_RETRY_ATTEMPTS} attempts (degraded to static): ${(err as Error).message}`);
+            }
+          }
+        }
+        if (!animSuccess) {
+          staticDegradedSegments.push(i);
         }
       }
 
@@ -759,7 +793,9 @@ async function generateAssets(
 
           // Rename .wav file to slugified song name
           const oldPath = manifest.music[i].path;
-          const slugName = name.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase();
+          const rawSlug = name.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase();
+          // Fall back to a numbered name if all characters were non-ASCII and slug is empty
+          const slugName = rawSlug.length > 0 ? rawSlug : `music-${String(i).padStart(3, '0')}`;
           const newPath = join(outputDir, 'music', `${slugName}.wav`);
           if (oldPath !== newPath && await fileExists(oldPath)) {
             await renameFile(oldPath, newPath);
@@ -774,7 +810,11 @@ async function generateAssets(
       }
     }
 
-    return { manifest };
+    const result: AssetGenerationResult = { manifest };
+    if (staticDegradedSegments.length > 0) {
+      result.staticDegradedSegments = staticDegradedSegments;
+    }
+    return result;
   }
 
   // ========== NARRATED: Original pipeline ==========
@@ -796,14 +836,30 @@ async function generateAssets(
   // Generate images from script cues — ground prompts via visual search + LLM first
   if (manifest.images.length === 0) {
     const topic = scriptOutput.productionBrief?.topic ?? '';
+    const groundedCuesPath = join(outputDir, 'grounded-cues.json');
 
-    // Step 1: Ground image cues with web search + Claude Haiku rewrite
-    const cuesForGrounding = scriptOutput.script.map((section, i) => ({
-      id: `section-${i}`,
-      imageCue: section.imageCue,
-      narration: section.narration,
-    }));
-    const groundingResults = await groundBatchPrompts(cuesForGrounding, topic, imageFramework);
+    // Step 1: Ground image cues — load from cache if already done (resume safety)
+    let groundingResults: Map<string, { groundedPrompt: string }>;
+    const groundedCachExists = await fileExists(groundedCuesPath);
+    if (groundedCachExists) {
+      log.info('Loading existing grounded cues (resume — skipping re-grounding)');
+      const cached = await readJsonFile<Record<string, { groundedPrompt: string }>>(groundedCuesPath);
+      groundingResults = new Map(Object.entries(cached));
+    } else {
+      const cuesForGrounding = scriptOutput.script.map((section, i) => ({
+        id: `section-${i}`,
+        imageCue: section.imageCue,
+        narration: section.narration,
+      }));
+      const rawGrounding = await groundBatchPrompts(cuesForGrounding, topic, imageFramework);
+      groundingResults = rawGrounding;
+      // Persist grounded prompts so resume skips this expensive step
+      const cacheObj: Record<string, { groundedPrompt: string }> = {};
+      for (const [id, result] of rawGrounding) {
+        cacheObj[id] = { groundedPrompt: result.groundedPrompt };
+      }
+      await writeJsonFile(groundedCuesPath, cacheObj);
+    }
 
     // Step 2: Build final cue list using grounded prompts
     const imageCues = scriptOutput.script.map((section, i) => {
@@ -1116,9 +1172,17 @@ async function compileVideo(
       // Load system instruction from config path
       let systemInstruction: string | undefined;
       if (config.thumbnail.systemInstructionPath) {
-        const { resolve } = await import('path');
-        const projectRoot = resolve(channelDir, '..');
-        const siPath = resolve(projectRoot, '..', config.thumbnail.systemInstructionPath);
+        const { resolve: resolvePath } = await import('path');
+        const projectRoot = resolvePath(channelDir, '..');
+        const repoRoot = resolvePath(projectRoot, '..');
+        const siPath = resolvePath(repoRoot, config.thumbnail.systemInstructionPath);
+        // Guard against path traversal — resolved path must stay within repo root
+        if (!siPath.startsWith(repoRoot + '/') && siPath !== repoRoot) {
+          throw new ConfigError(
+            `systemInstructionPath resolves outside project root: ${config.thumbnail.systemInstructionPath}`,
+            config.thumbnail.systemInstructionPath
+          );
+        }
         systemInstruction = await loadSystemInstruction(siPath);
       }
 
@@ -1153,7 +1217,8 @@ async function compileVideo(
 async function sendAssetPreviewMessages(
   config: ChannelConfig,
   manifest: AssetManifest,
-  contentPlan: ContentPlan
+  contentPlan: ContentPlan,
+  staticDegradedSegments?: number[]
 ): Promise<number> {
   const segmentCount = contentPlan.segmentCount ?? 1;
 
@@ -1175,13 +1240,17 @@ async function sendAssetPreviewMessages(
   }
 
   const prompts = contentPlan.musicOnlyPrompts;
-  const promptSummary = [
+  const promptLines = [
     `📋 Prompts Used:`,
     `🖼 Image (${prompts?.imagePrompts.length ?? 0} prompts): ${prompts?.imagePrompts[0]?.slice(0, 200) ?? 'none'}`,
     `🎵 Music: ${prompts?.musicPrompt ?? 'none'}`,
     `🎞 Animation (${prompts?.animationPrompts.length ?? 0} prompts): ${prompts?.animationPrompts[0]?.slice(0, 100) ?? 'none'}`,
-  ].join('\n');
-  await sendTextMessage(promptSummary);
+  ];
+  if (staticDegradedSegments && staticDegradedSegments.length > 0) {
+    const segNums = staticDegradedSegments.map((n) => n + 1).join(', ');
+    promptLines.push(`\n⚠️ Animation failed (static fallback) for segment(s): ${segNums}`);
+  }
+  await sendTextMessage(promptLines.join('\n'));
 
   const messageId = await sendApprovalRequest({
     videoTitle: `Asset Preview — ${config.channel.name}`,

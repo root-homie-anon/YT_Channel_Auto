@@ -910,6 +910,21 @@ export async function compileMusicOnlyVideo(
   }
 }
 
+/**
+ * Escape text for safe use in an FFmpeg drawtext filter value.
+ * FFmpeg filter syntax uses ':' as delimiter and '\' as escape character.
+ * Order matters: backslash must be escaped first.
+ */
+function escapeFFmpegText(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')   // backslash → \\
+    .replace(/'/g, "\\'")      // single quote → \'
+    .replace(/:/g, '\\:')      // colon → \:
+    .replace(/\[/g, '\\[')     // [ → \[
+    .replace(/]/g, '\\]')      // ] → \]
+    .replace(/;/g, '\\;');     // semicolon → \;
+}
+
 export async function generateThumbnail(
   imagePath: string,
   outputPath: string,
@@ -921,7 +936,7 @@ export async function generateThumbnail(
     '-i', imagePath,
     '-vf', textOverlay
       ? `scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,` +
-        `drawtext=text='${textOverlay.replace(/'/g, "\\'")}':fontsize=64:fontcolor=white:` +
+        `drawtext=text='${escapeFFmpegText(textOverlay)}':fontsize=64:fontcolor=white:` +
         `borderw=3:bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2`
       : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
     '-frames:v', '1',

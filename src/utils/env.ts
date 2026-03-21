@@ -21,12 +21,10 @@ export const ENV = {
   // Runway ML
   RUNWAY_API_KEY: process.env.RUNWAY_API_KEY ?? '',
 
-  // YouTube
-  YOUTUBE_API_KEY: process.env.YOUTUBE_API_KEY ?? '',
-
   // Telegram
   TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN ?? '',
   TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID ?? '',
+  TELEGRAM_OWNER_ID: process.env.TELEGRAM_OWNER_ID ?? '',
 
   // Gemini / Nano Banana 2
   GEMINI_API_KEY: process.env.GEMINI_API_KEY ?? '',
@@ -65,4 +63,45 @@ export function requireEnv(key: keyof typeof ENV): string {
     throw new Error(`Missing required environment variable: ${key}`);
   }
   return value;
+}
+
+const REQUIRED_ENV_VARS: ReadonlyArray<keyof typeof ENV> = [
+  'ANTHROPIC_API_KEY',
+  'FLUX_API_KEY',
+  'ELEVENLABS_API_KEY',
+  'REPLICATE_API_TOKEN',
+  'TELEGRAM_BOT_TOKEN',
+  'TELEGRAM_CHAT_ID',
+];
+
+const OPTIONAL_ENV_VARS: ReadonlyArray<keyof typeof ENV> = [
+  'TAVILY_API_KEY',
+  'SUPABASE_URL',
+  'SUPABASE_SERVICE_KEY',
+  'RUNWAY_API_KEY',
+  'TELEGRAM_OWNER_ID',
+  'DASHBOARD_USER',
+  'DASHBOARD_PASS',
+];
+
+/**
+ * Validates all critical env vars at once. Throws with a complete list of missing vars
+ * so the operator can fix all issues in one restart. Call at server startup.
+ */
+export function validateRequiredEnv(): void {
+  const missing = REQUIRED_ENV_VARS.filter((key) => !ENV[key]);
+  if (missing.length > 0) {
+    throw new Error(
+      `Server startup aborted — missing required environment variables:\n` +
+      missing.map((k) => `  - ${k}`).join('\n') +
+      `\n\nAdd these to your .env file and restart.`
+    );
+  }
+
+  const missingOptional = OPTIONAL_ENV_VARS.filter((key) => !ENV[key]);
+  if (missingOptional.length > 0) {
+    console.warn(
+      `[env] Optional env vars not set (some features may be disabled): ${missingOptional.join(', ')}`
+    );
+  }
 }

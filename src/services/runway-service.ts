@@ -7,6 +7,7 @@ import { AssetFile } from '../types/index.js';
 import { requireEnv } from '../utils/env.js';
 import { ensureDir } from '../utils/file-helpers.js';
 import { createLogger } from '../utils/logger.js';
+import { fetchWithTimeout } from '../utils/fetch-helpers.js';
 
 const log = createLogger('runway-service');
 
@@ -27,7 +28,7 @@ export async function generateAnimation(options: AnimationOptions): Promise<Asse
 
   try {
     // Start generation
-    const startResponse = await fetch('https://api.dev.runwayml.com/v1/image_to_video', {
+    const startResponse = await fetchWithTimeout('https://api.dev.runwayml.com/v1/image_to_video', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -59,7 +60,7 @@ export async function generateAnimation(options: AnimationOptions): Promise<Asse
     const videoUrl = await pollForCompletion(apiKey, taskId);
 
     // Download
-    const videoResponse = await fetch(videoUrl);
+    const videoResponse = await fetchWithTimeout(videoUrl, {}, 120_000);
     if (!videoResponse.ok) {
       throw new ApiError('Failed to download generated animation', 'runway', videoResponse.status);
     }
@@ -93,12 +94,12 @@ async function pollForCompletion(apiKey: string, taskId: string): Promise<string
   for (let i = 0; i < MAX_POLLS; i++) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
 
-    const statusResponse = await fetch(`https://api.dev.runwayml.com/v1/tasks/${taskId}`, {
+    const statusResponse = await fetchWithTimeout(`https://api.dev.runwayml.com/v1/tasks/${taskId}`, {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'X-Runway-Version': '2024-11-06',
       },
-    });
+    }, 30_000);
 
     if (!statusResponse.ok) {
       throw new ApiError(

@@ -1,6 +1,7 @@
 import { ApiError } from '../errors/index.js';
 import { requireEnv } from '../utils/env.js';
 import { createLogger } from '../utils/logger.js';
+import { fetchWithTimeout } from '../utils/fetch-helpers.js';
 
 const log = createLogger('prompt-grounding');
 
@@ -47,7 +48,7 @@ async function searchVisualContext(query: string): Promise<string> {
   const apiKey = requireEnv('TAVILY_API_KEY');
 
   try {
-    const response = await fetch('https://api.tavily.com/search', {
+    const response = await fetchWithTimeout('https://api.tavily.com/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -187,7 +188,7 @@ ${channelContext}
 
 Rewrite the image cue into an optimized Flux prompt. Ground it in the visual research — use specific real-world details (materials, colors, shapes, architecture) instead of vague descriptions. Keep under 55 words. Output ONLY the prompt.`;
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'x-api-key': apiKey,

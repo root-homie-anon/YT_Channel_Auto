@@ -22,9 +22,16 @@ mkdir -p "$(dirname "$LOG_FILE")"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"; }
 
-# Rotate log if too large
+# Rotate watchdog log if too large
 if [ -f "$LOG_FILE" ] && [ "$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)" -gt "$MAX_LOG_SIZE" ]; then
   mv "$LOG_FILE" "${LOG_FILE}.old"
+fi
+
+# Rotate dashboard.log if too large
+DASHBOARD_LOG_FILE="${PROJECT_DIR}/logs/dashboard.log"
+if [ -f "$DASHBOARD_LOG_FILE" ] && [ "$(stat -c%s "$DASHBOARD_LOG_FILE" 2>/dev/null || echo 0)" -gt "$MAX_LOG_SIZE" ]; then
+  mv "$DASHBOARD_LOG_FILE" "${DASHBOARD_LOG_FILE}.old"
+  log "Rotated dashboard.log (exceeded 5MB)"
 fi
 
 # Check if dashboard is responding

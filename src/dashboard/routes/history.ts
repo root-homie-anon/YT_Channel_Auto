@@ -4,6 +4,10 @@ import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { readJsonFile } from '../../utils/file-helpers.js';
 import { PipelineStatus } from '../../types/index.js';
+import { isValidSlug, isValidProductionId } from '../../utils/validation.js';
+import { createLogger } from '../../utils/logger.js';
+
+const log = createLogger('routes/history');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..', '..', '..');
@@ -12,7 +16,12 @@ const router = Router();
 
 router.get('/:slug/history', async (req: Request, res: Response) => {
   try {
-    const outputDir = join(PROJECT_ROOT, 'projects', req.params.slug as string, 'output');
+    const slug = req.params.slug as string;
+    if (!isValidSlug(slug)) {
+      res.status(400).json({ error: 'Invalid channel slug' });
+      return;
+    }
+    const outputDir = join(PROJECT_ROOT, 'projects', slug, 'output');
     if (!existsSync(outputDir)) {
       res.json([]);
       return;
@@ -41,18 +50,29 @@ router.get('/:slug/history', async (req: Request, res: Response) => {
 
     res.json(runs);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 router.get('/:slug/history/:productionId', async (req: Request, res: Response) => {
   try {
+    const slug = req.params.slug as string;
+    const productionId = req.params.productionId as string;
+    if (!isValidSlug(slug)) {
+      res.status(400).json({ error: 'Invalid channel slug' });
+      return;
+    }
+    if (!isValidProductionId(productionId)) {
+      res.status(400).json({ error: 'Invalid production ID' });
+      return;
+    }
     const runDir = join(
       PROJECT_ROOT,
       'projects',
-      req.params.slug as string,
+      slug,
       'output',
-      req.params.productionId as string
+      productionId
     );
     if (!existsSync(runDir)) {
       res.status(404).json({ error: 'Production run not found' });
@@ -60,7 +80,7 @@ router.get('/:slug/history/:productionId', async (req: Request, res: Response) =
     }
 
     const files = ['pipeline-status.json', 'content-plan.json', 'script-output.json', 'asset-manifest.json', 'compilation-result.json', 'publish-result.json'];
-    const result: Record<string, unknown> = { productionId: req.params.productionId };
+    const result: Record<string, unknown> = { productionId };
 
     for (const file of files) {
       const filePath = join(runDir, file);
@@ -72,7 +92,8 @@ router.get('/:slug/history/:productionId', async (req: Request, res: Response) =
 
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

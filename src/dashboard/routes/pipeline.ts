@@ -3,12 +3,16 @@ import { existsSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { loadChannelConfig } from '../../utils/config-loader.js';
+import { createLogger } from '../../utils/logger.js';
+
+const log = createLogger('routes/pipeline');
 import { generateProductionId, readJsonFile, writeJsonFile } from '../../utils/file-helpers.js';
 import { ensureDir } from '../../utils/file-helpers.js';
 import { runPipeline, resumePipeline } from '../../services/pipeline.js';
 import { loadRotationState } from '../../services/rotation-state.js';
 import { approveProduction, rejectProduction, listPendingApprovals, listReadyProductions, getPendingApproval } from '../../services/approval-service.js';
 import { ScriptOutput, PipelineStatus } from '../../types/index.js';
+import { isValidSlug, isValidProductionId } from '../../utils/validation.js';
 import { buildContentPlan } from '../content-planner.js';
 import { setupProduction, saveScriptOutput } from '../../production/produce.js';
 import {
@@ -20,6 +24,7 @@ import {
   addSseClient,
 } from '../state/pipeline-tracker.js';
 import { getConcurrencyStatus, getQueueSnapshot, acquirePipelineSlot, releasePipelineSlot } from '../../services/production-queue.js';
+import { getTelegramListenerHealth } from '../../services/telegram-service.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..', '..', '..');
@@ -32,6 +37,10 @@ const router = Router();
 router.post('/:slug/produce', async (req: Request, res: Response) => {
   try {
     const slug = req.params.slug as string;
+    if (!isValidSlug(slug)) {
+      res.status(400).json({ error: 'Invalid channel slug' });
+      return;
+    }
     const {
       topic, scriptOutput, segmentCount,
       // Accept both singular (from dashboard UI) and plural (from agent API)
@@ -159,7 +168,8 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
       res.status(202).json({ productionId, status: 'pending_script', topic });
     }
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -167,6 +177,10 @@ router.post('/:slug/produce', async (req: Request, res: Response) => {
 router.post('/:slug/setup', async (req: Request, res: Response) => {
   try {
     const slug = req.params.slug as string;
+    if (!isValidSlug(slug)) {
+      res.status(400).json({ error: 'Invalid channel slug' });
+      return;
+    }
     const { topic } = req.body;
 
     const setup = await setupProduction(slug, topic);
@@ -178,7 +192,8 @@ router.post('/:slug/setup', async (req: Request, res: Response) => {
       frameworks: setup.frameworks,
     });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -188,6 +203,14 @@ router.post('/:slug/run/:productionId', async (req: Request, res: Response) => {
   try {
     const slug = req.params.slug as string;
     const productionId = req.params.productionId as string;
+    if (!isValidSlug(slug)) {
+      res.status(400).json({ error: 'Invalid channel slug' });
+      return;
+    }
+    if (!isValidProductionId(productionId)) {
+      res.status(400).json({ error: 'Invalid production ID' });
+      return;
+    }
     const {
       scriptOutput,
       imagePrompts, animationPrompts, musicPrompt: musicPromptBody,
@@ -254,7 +277,8 @@ router.post('/:slug/run/:productionId', async (req: Request, res: Response) => {
 
     res.status(202).json({ productionId, status: 'pipeline_started' });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -299,7 +323,8 @@ router.get('/pending', async (_req: Request, res: Response) => {
 
     res.json(pending);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -308,7 +333,12 @@ router.get('/active', (_req: Request, res: Response) => {
 });
 
 router.get('/active/:slug', (req: Request, res: Response) => {
-  const pipeline = getActivePipeline(req.params.slug as string);
+  const slug = req.params.slug as string;
+  if (!isValidSlug(slug)) {
+    res.status(400).json({ error: 'Invalid channel slug' });
+    return;
+  }
+  const pipeline = getActivePipeline(slug);
   if (!pipeline) {
     res.status(404).json({ error: 'No active pipeline for this channel' });
     return;
@@ -328,6 +358,10 @@ router.get('/events', (_req: Request, res: Response) => {
 router.get('/:slug/rotation-state', async (req: Request, res: Response) => {
   try {
     const slug = req.params.slug as string;
+    if (!isValidSlug(slug)) {
+      res.status(400).json({ error: 'Invalid channel slug' });
+      return;
+    }
     const channelDir = join(PROJECT_ROOT, 'projects', slug);
     if (!existsSync(join(channelDir, 'config.json'))) {
       res.status(404).json({ error: 'Channel not found' });
@@ -336,7 +370,8 @@ router.get('/:slug/rotation-state', async (req: Request, res: Response) => {
     const state = await loadRotationState(channelDir);
     res.json(state);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -346,6 +381,14 @@ router.post('/:slug/approve/:productionId', async (req: Request, res: Response) 
   try {
     const slug = req.params.slug as string;
     const productionId = req.params.productionId as string;
+    if (!isValidSlug(slug)) {
+      res.status(400).json({ error: 'Invalid channel slug' });
+      return;
+    }
+    if (!isValidProductionId(productionId)) {
+      res.status(400).json({ error: 'Invalid production ID' });
+      return;
+    }
 
     // Check checkpoint type before approving (approval clears it)
     const pending = await getPendingApproval(slug, productionId);
@@ -381,7 +424,8 @@ router.post('/:slug/approve/:productionId', async (req: Request, res: Response) 
       res.json({ status: 'ready', productionId, message: 'Video ready — schedule to publish' });
     }
   } catch (err) {
-    res.status(400).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -389,6 +433,14 @@ router.post('/:slug/reject/:productionId', async (req: Request, res: Response) =
   try {
     const slug = req.params.slug as string;
     const productionId = req.params.productionId as string;
+    if (!isValidSlug(slug)) {
+      res.status(400).json({ error: 'Invalid channel slug' });
+      return;
+    }
+    if (!isValidProductionId(productionId)) {
+      res.status(400).json({ error: 'Invalid production ID' });
+      return;
+    }
     const { reason } = req.body ?? {};
 
     await rejectProduction(slug, productionId, reason);
@@ -396,7 +448,8 @@ router.post('/:slug/reject/:productionId', async (req: Request, res: Response) =
 
     res.json({ status: 'rejected', productionId });
   } catch (err) {
-    res.status(400).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -405,7 +458,8 @@ router.get('/approvals/pending', async (_req: Request, res: Response) => {
     const pending = await listPendingApprovals();
     res.json(pending);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -417,7 +471,8 @@ router.get('/ready', async (_req: Request, res: Response) => {
     const ready = await listReadyProductions();
     res.json(ready);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -429,6 +484,14 @@ router.post('/:slug/schedule/:productionId', async (req: Request, res: Response)
   try {
     const slug = req.params.slug as string;
     const productionId = req.params.productionId as string;
+    if (!isValidSlug(slug)) {
+      res.status(400).json({ error: 'Invalid channel slug' });
+      return;
+    }
+    if (!isValidProductionId(productionId)) {
+      res.status(400).json({ error: 'Invalid production ID' });
+      return;
+    }
     const { scheduledTime, privacy } = req.body ?? {};
 
     const outputDir = join(PROJECT_ROOT, 'projects', slug, 'output', productionId);
@@ -477,7 +540,8 @@ router.post('/:slug/schedule/:productionId', async (req: Request, res: Response)
       : `Publishing now as ${publishParams.privacy}`;
     res.json({ status: 'publishing', productionId, message: msg });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -487,6 +551,7 @@ router.get('/system-status', (_req: Request, res: Response) => {
     concurrency: getConcurrencyStatus(),
     queue: getQueueSnapshot(),
     activePipelines: getActivePipelines(),
+    telegramListener: getTelegramListenerHealth(),
   });
 });
 
@@ -495,6 +560,14 @@ router.post('/:slug/retry/:productionId', async (req: Request, res: Response) =>
   try {
     const slug = req.params.slug as string;
     const productionId = req.params.productionId as string;
+    if (!isValidSlug(slug)) {
+      res.status(400).json({ error: 'Invalid channel slug' });
+      return;
+    }
+    if (!isValidProductionId(productionId)) {
+      res.status(400).json({ error: 'Invalid production ID' });
+      return;
+    }
 
     const outputDir = join(PROJECT_ROOT, 'projects', slug, 'output', productionId);
     const status = await readJsonFile<PipelineStatus>(join(outputDir, 'pipeline-status.json'));
@@ -538,7 +611,8 @@ router.post('/:slug/retry/:productionId', async (req: Request, res: Response) =>
 
     res.json({ status: 'retrying', productionId, message: 'Pipeline retrying — existing assets will be reused' });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -547,6 +621,10 @@ router.post('/:slug/update-metadata/:videoId', async (req: Request, res: Respons
   try {
     const slug = req.params.slug as string;
     const videoId = req.params.videoId as string;
+    if (!isValidSlug(slug)) {
+      res.status(400).json({ error: 'Invalid channel slug' });
+      return;
+    }
     const { title, description, hashtags } = req.body as {
       title?: string;
       description?: string;
@@ -566,7 +644,8 @@ router.post('/:slug/update-metadata/:videoId', async (req: Request, res: Respons
 
     res.json({ status: 'updated', videoId, message: 'Video metadata updated successfully' });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

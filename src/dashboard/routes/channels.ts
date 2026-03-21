@@ -6,6 +6,9 @@ import { readJsonFile } from '../../utils/file-helpers.js';
 import { ChannelConfig } from '../../types/index.js';
 import { createChannel, toSlug, ChannelInputs } from '../../utils/channel-factory.js';
 import { getActivePipeline } from '../state/pipeline-tracker.js';
+import { createLogger } from '../../utils/logger.js';
+
+const log = createLogger('routes/channels');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..', '..', '..');
@@ -35,7 +38,8 @@ router.get('/', async (_req: Request, res: Response) => {
 
     res.json(channels);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -86,8 +90,10 @@ router.get('/:slug', async (req: Request, res: Response) => {
     const hasOAuth = existsSync(oauthPath);
     const hasVoiceId = config.credentials.elevenLabsVoiceId !== '' && config.credentials.elevenLabsVoiceId !== 'tbd';
 
+    const { credentials: _creds, ...safeConfig } = config;
+
     res.json({
-      config,
+      config: safeConfig,
       status: active ? active.stage : 'idle',
       currentTopic: active?.topic ?? null,
       stats: {
@@ -101,7 +107,8 @@ router.get('/:slug', async (req: Request, res: Response) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -131,7 +138,8 @@ router.post('/', (req: Request, res: Response) => {
     const config = createChannel(inputs);
     res.status(201).json({ config, slug: inputs.slug });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    log.error(`Request failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

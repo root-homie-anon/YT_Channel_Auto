@@ -1,7 +1,10 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { readFile, readdir, stat } from 'fs/promises';
+import { readdir, stat } from 'fs/promises';
+import { createReadStream } from 'fs';
 import { join, basename, extname } from 'path';
 import { existsSync } from 'fs';
+
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024; // 200MB — skip archival above this
 
 import { requireEnv } from '../utils/env.js';
 import { createLogger } from '../utils/logger.js';
@@ -54,16 +57,31 @@ async function uploadFile(
   metadata?: Record<string, string>
 ): Promise<UploadResult> {
   const supabase = getClient();
-  const fileBuffer = await readFile(localPath);
   const fileStats = await stat(localPath);
+
+  if (fileStats.size > MAX_UPLOAD_BYTES) {
+    log.warn(`Skipping archival for ${basename(localPath)} — file size ${(fileStats.size / 1024 / 1024).toFixed(1)}MB exceeds 200MB limit`);
+    return { path: storagePath, size: fileStats.size };
+  }
+
+  // Use streaming upload via Web ReadableStream to avoid loading entire file into RAM
+  const nodeStream = createReadStream(localPath);
+  const webStream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      nodeStream.on('data', (chunk: Buffer | string) => controller.enqueue(new Uint8Array(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))));
+      nodeStream.on('end', () => controller.close());
+      nodeStream.on('error', (err) => controller.error(err));
+    },
+  });
 
   const { error } = await supabase.storage
     .from(BUCKET)
-    .upload(storagePath, fileBuffer, {
+    .upload(storagePath, webStream, {
       contentType,
       upsert: true,
+      duplex: 'half',
       ...(metadata ? { metadata } : {}),
-    });
+    } as Parameters<ReturnType<SupabaseClient['storage']['from']>['upload']>[2]);
 
   if (error) {
     throw new Error(`Upload failed for ${storagePath}: ${error.message}`);

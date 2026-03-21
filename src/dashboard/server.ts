@@ -1,10 +1,11 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 import { config } from 'dotenv';
-import { basicAuth } from './middleware/auth.js';
+import { basicAuth, checkAuthConfig } from './middleware/auth.js';
+import { validateRequiredEnv } from '../utils/env.js';
 import channelRoutes from './routes/channels.js';
 import queueRoutes from './routes/queue.js';
 import pipelineRoutes from './routes/pipeline.js';
@@ -23,10 +24,39 @@ import {
   findStalledProductions,
   markStalledAsFailed,
   findActiveProductions,
+  restoreConcurrencyState,
 } from '../services/production-queue.js';
 
 const PROJECT_ROOT = resolve(__dirname, '..', '..');
 config({ path: resolve(PROJECT_ROOT, '.env') });
+
+validateRequiredEnv();
+checkAuthConfig();
+
+// --- In-memory rate limiter: 10 requests per minute per IP on mutating endpoints ---
+const _rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 10;
+
+function rateLimitMiddleware(req: Request, res: Response, next: NextFunction): void {
+  const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
+  const now = Date.now();
+  const entry = _rateLimitStore.get(ip);
+
+  if (!entry || now > entry.resetAt) {
+    _rateLimitStore.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    next();
+    return;
+  }
+
+  if (entry.count >= RATE_LIMIT_MAX) {
+    res.status(429).json({ error: 'Too many requests — try again in a minute' });
+    return;
+  }
+
+  entry.count++;
+  next();
+}
 
 const app = express();
 const PORT = parseInt(process.env.DASHBOARD_PORT ?? '3000', 10);
@@ -34,6 +64,12 @@ const PORT = parseInt(process.env.DASHBOARD_PORT ?? '3000', 10);
 app.use(express.json());
 app.use(basicAuth);
 app.use(express.static(resolve(__dirname, '..', 'public')));
+
+// Apply rate limiting to mutating pipeline endpoints before mounting routes
+app.post('/api/channels/:slug/produce', rateLimitMiddleware);
+app.post('/api/channels/:slug/approve/:productionId', rateLimitMiddleware);
+app.post('/api/channels/:slug/schedule/:productionId', rateLimitMiddleware);
+app.post('/api/channels/:slug/retry/:productionId', rateLimitMiddleware);
 
 // API routes
 app.use('/api/channels', channelRoutes);
@@ -46,8 +82,8 @@ app.use('/api/channels', oauthRoutes);
 // Produce endpoint lives under channels but needs pipeline logic
 app.use('/api/channels', pipelineRoutes);
 
-app.listen(PORT, async () => {
-  console.log(`Dashboard running at http://localhost:${PORT}`);
+app.listen(PORT, '127.0.0.1', async () => {
+  console.log(`Dashboard running at http://127.0.0.1:${PORT}`);
 
   // Recover pending approvals and register them in the tracker
   try {
@@ -76,6 +112,8 @@ app.listen(PORT, async () => {
     if (activeProds.length > 0) {
       console.log(`Recovered ${activeProds.length} active pipeline(s)`);
     }
+    // Restore in-memory concurrency counters to match re-registered pipelines
+    await restoreConcurrencyState(projectsDir);
   } catch (err) {
     console.error('Failed to recover active pipelines:', (err as Error).message);
   }

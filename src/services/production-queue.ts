@@ -283,6 +283,70 @@ export async function findActiveProductions(projectsDir: string): Promise<Array<
   return active;
 }
 
+/**
+ * Restore in-memory concurrency counters after a process restart.
+ * Scans all non-stalled, non-terminal productions to count how many are
+ * actively occupying pipeline and compilation slots.
+ *
+ * Call this from server startup, after findActiveProductions().
+ */
+export async function restoreConcurrencyState(projectsDir: string): Promise<void> {
+  const PIPELINE_ACTIVE_STAGES: string[] = ['asset_generation', 'compilation', 'publishing'];
+  const COMPILATION_ACTIVE_STAGES: string[] = ['compilation'];
+
+  let pipelineCount = 0;
+  let compilationCount = 0;
+
+  let channelDirs: string[];
+  try {
+    channelDirs = readdirSync(projectsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && d.name.startsWith('ch-'))
+      .map((d) => d.name);
+  } catch {
+    return;
+  }
+
+  for (const slug of channelDirs) {
+    const outputBase = join(projectsDir, slug, 'output');
+    if (!existsSync(outputBase)) continue;
+
+    const runs = readdirSync(outputBase, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+
+    for (const run of runs) {
+      const statusPath = join(outputBase, run, 'pipeline-status.json');
+      if (!existsSync(statusPath)) continue;
+
+      try {
+        const status = await readJsonFile<PipelineStatus>(statusPath);
+
+        // Only consider non-stalled productions
+        const updatedAt = new Date(status.updatedAt);
+        const elapsed = Date.now() - updatedAt.getTime();
+        if (elapsed > STALL_THRESHOLD_MS) continue;
+
+        if (PIPELINE_ACTIVE_STAGES.includes(status.stage)) {
+          pipelineCount++;
+        }
+        if (COMPILATION_ACTIVE_STAGES.includes(status.stage)) {
+          compilationCount++;
+        }
+      } catch { /* skip corrupt files */ }
+    }
+  }
+
+  activePipelineCount = Math.min(pipelineCount, MAX_CONCURRENT_PIPELINES);
+  activeCompilationCount = Math.min(compilationCount, MAX_CONCURRENT_COMPILATIONS);
+
+  if (activePipelineCount > 0 || activeCompilationCount > 0) {
+    log.info(
+      `Concurrency state restored: ${activePipelineCount} pipeline slot(s), ` +
+      `${activeCompilationCount} compilation slot(s)`
+    );
+  }
+}
+
 // === Post-Publish Cleanup ===
 
 const CLEANUP_DIRS = ['images', 'animations', 'music', 'voiceover', 'stock-footage', 'teaser'];
