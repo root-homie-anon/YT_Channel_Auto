@@ -1,6 +1,6 @@
 # Image Framework — [CHANNEL NAME]
 # Location: projects/ch-[name]/frameworks/image-framework.md
-# This file is read by @asset-producer via the flux-image-producer skill before every image generation task.
+# This file is read by @content-strategist via the flux-image-producer skill when constructing image prompts.
 # Fill in every section before the first production run. Incomplete sections produce inconsistent output.
 
 ---

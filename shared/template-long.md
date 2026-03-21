@@ -37,67 +37,37 @@ All creative frameworks are in `frameworks/`. Read the relevant file before each
 
 ## Production Pipeline — Long Format
 
-### Step 1 — Script Generation
-Agent: `@script-writer`
-- Read `frameworks/script-formula.md`
-- Generate full long-form script for the user-provided topic
-- Output: structured script with clearly labeled sections
-
-### Step 2 — Image Cue Extraction
+### Step 1 — Script & Metadata Generation
 Agent: `@content-strategist`
-- Read script sequentially section by section
-- Extract one visual context cue per section
-- Map image prompts to script timeline
-- Output: ordered list of image prompts tied to script sections
+- Read `frameworks/script-formula.md` and all other frameworks
+- Generate full long-form script
+- Extract image cues per section, map to script timeline
+- Generate production brief (thumbnail direction, title direction)
+- Generate title, description, hashtags
+- POST to pipeline API to trigger asset production
 
-### Step 3 — Asset Generation
-Agent: `@asset-producer`
-Run in this order:
-1. **Images** — call Flux for each image prompt using `frameworks/image-framework.md`
-2. **Voice Over** — call ElevenLabs with full script using voice ID `{{ELEVENLABS_VOICE_ID}}`
-3. **Music** — generate one fresh background track using `frameworks/music-framework.md`
+### Step 2 — Asset Generation
+Pipeline code (`src/services/pipeline.ts`):
+1. **Images** — Flux for each image prompt
+2. **Voice Over** — ElevenLabs using voice ID `{{ELEVENLABS_VOICE_ID}}`
+3. **Music** — Stable Audio
 
-### Step 4 — Telegram Checkpoint 1
-Agent: `@channel-manager`
-- Send asset summary and sample previews via Telegram
+### Step 3 — Telegram Checkpoint 1
+Pipeline code — Telegram bot sends asset summary and sample previews.
 - Wait for user response: `approve` / `regen` / `regen [notes]`
-- On `regen`: redo flagged assets then re-send checkpoint
-- On `approve`: proceed to Step 5
 
-### Step 5 — Video Compilation
-Agent: `@video-compiler`
-- Read `frameworks/image-framework.md` for any visual style notes
-- Compile 16:9 1080p video
-- Images: Ken Burns motion (subtle scale/pan)
-- Transitions: crossfade between images
-- Image timing: driven by VO section breaks
-- Audio: music layer underneath, VO on top
-- Output: compiled video file
+### Step 4 — Video Compilation
+Pipeline code — 16:9 1080p, Ken Burns motion, crossfade, VO-timed images.
 
-### Step 6 — Thumbnail Generation
-Agent: `@video-compiler`
-- Read `frameworks/thumbnail-formula.md`
-- Select most visually striking image from Step 3
-- Generate thumbnail-optimized version per formula
-- Output: thumbnail image file
+### Step 5 — Thumbnail Generation
+Pipeline code — NBPro (Gemini) generates thumbnail using `thumbnailDirection` from production brief.
 
-### Step 7 — Title, Description & Tags
-Agent: `@script-writer`
-- Read `frameworks/title-formula.md` → generate title
-- Read `shared/description-formula.md` → generate description with chapter markers and CTAs
-- Generate tags and hashtags per description formula
-- Output: title, description, tags as separate fields
+### Step 6 — Telegram Checkpoint 2
+Pipeline code — Telegram bot sends final video, thumbnail, title, description.
+- Wait for user response: `approve` then schedule time.
 
-### Step 8 — Telegram Checkpoint 2
-Agent: `@channel-manager`
-- Send final compiled video, thumbnail, title, description, and tags via Telegram
-- Wait for user response: `approve` then schedule time
-- On approve + time received: proceed to Step 9
-
-### Step 9 — Schedule & Post
-Agent: `@channel-manager`
-- Schedule video via YouTube Data API using provided time
-- Confirm scheduled post back to user via Telegram
+### Step 7 — Schedule & Post
+Pipeline code — YouTube Data API upload, unlisted until approval, then scheduled publish.
 
 ---
 

@@ -1,6 +1,6 @@
 # Title Formula — [Channel Name]
 
-> This file defines how the `@script-writer` agent generates video titles for this channel.
+> This file defines how `@content-strategist` generates video titles for this channel.
 > Fill in all bracketed sections before the first production run.
 > Title generation runs after the script is complete and the thumbnail concept is locked.
 > The agent reads this file at the start of every title generation task.

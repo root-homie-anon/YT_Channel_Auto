@@ -1,6 +1,6 @@
 # Script Formula — [Channel Name]
 
-> This file defines how the `@script-writer` agent generates long-form video scripts for this channel.
+> This file defines how `@content-strategist` generates long-form video scripts for this channel.
 > Fill in all bracketed sections before the first production run.
 > The agent reads this file at the start of every script generation task.
 
@@ -114,7 +114,7 @@ The core content. Broken into sections.
 ```
 [IMAGE CUE: brief description of the visual context for this section]
 ```
-These cues are extracted by `@content-strategist` and passed to `@asset-producer` for Flux generation.
+These cues are extracted by `@content-strategist` and passed to the pipeline for Flux image generation.
 
 ---
 
@@ -245,7 +245,7 @@ AUDIENCE LANGUAGE (how they search/talk about this):
 ---
 
 ## Image Direction
-> Read by: `@asset-producer` (Flux image generation)
+> Read by: `@content-strategist` (image prompt construction)
 
 PRIMARY subject/motif: [the dominant visual concept across most images]
 SUPPORTING subjects/motifs:
@@ -267,7 +267,7 @@ Per-section image cues: [extracted from script — list each IMAGE CUE tag in or
 ---
 
 ## Music Direction
-> Read by: `@asset-producer` (music generation)
+> Read by: `@content-strategist` (music direction)
 
 PRIMARY mood/emotion: [the dominant emotional tone the music must carry]
 SUPPORTING moods (secondary, can shift toward these):
@@ -284,7 +284,7 @@ Arc: [does the music stay consistent or shift — e.g. "builds gradually to sect
 ---
 
 ## Thumbnail Direction
-> Read by: `@video-compiler` (thumbnail generation)
+> Read by: `@content-strategist` (production brief — thumbnail direction)
 
 PRIMARY concept: [the single strongest visual idea that represents the video's hook]
 SUPPORTING context: [what secondary element adds intrigue or contrast]
@@ -298,7 +298,7 @@ Composition note: [e.g. single focal point left, negative space right for text, 
 ---
 
 ## Title Direction
-> Read by: `@script-writer` (title generation pass)
+> Read by: `@content-strategist` (title generation)
 
 Core hook phrase: [the most potent 3–5 word phrase from the script or hook]
 Primary keyword: [highest-value search term identified in research]

@@ -40,14 +40,12 @@ This file is the root orchestrator. On session start:
 All agents live in `.claude/agents/` and are shared across all channels.
 Channel-specific behavior comes from `config.json` and `frameworks/` — not from the agents themselves.
 
+Asset production, video compilation, and YouTube upload are handled by pipeline code (`src/`), not agents.
+
 | Agent | Role |
 |-------|------|
-| `@content-strategist` | Reads channel config, plans content, extracts image cues from script, drives the session |
-| `@script-writer` | Script gen, teaser script gen, title, description, tags, hashtags |
-| `@asset-producer` | Calls Flux (images), ElevenLabs (VO), Stable Audio (music), Runway ML (animation) |
-| `@video-compiler` | FFmpeg compilation for all formats, thumbnail generation |
-| `@channel-manager` | YouTube scheduling/posting, Telegram approval bot, channel config management |
-| `@niche-researcher` | One-time agent: researches successful channels in the niche, populates all framework files with data-driven creative direction |
+| `@content-strategist` | Reads channel config, plans content, generates all creative metadata (scripts, prompts, titles, descriptions, hashtags), drives the pipeline via POST to `/run` |
+| `@niche-researcher` | One-time: researches successful channels in the niche, populates all framework files with data-driven creative direction |
 
 ---
 
@@ -125,12 +123,8 @@ Generate `config.json` from collected inputs:
 All shared keys live in `.env` at project root. See `.env.example` for required variables.
 Never commit `.env`. YouTube OAuth credentials are per-channel and stored in each channel's directory.
 
-### Shared Description & Hashtags Formula
-The only formula shared across all channels lives at:
-```
-shared/description-formula.md
-```
-All channels use this for description and hashtag generation. Channel-specific title, script, image, music, and thumbnail formulas live in the channel's own `frameworks/` folder.
+### Description Formula
+Each channel uses its own description formula at the path defined in `config.frameworks.description` (typically `frameworks/description-formula.md`). A shared fallback lives at `shared/description-formula.md` but channel-specific formulas take precedence. Channel-specific title, script, image, music, and thumbnail formulas also live in the channel's own `frameworks/` folder.
 
 ---
 

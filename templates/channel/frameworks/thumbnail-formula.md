@@ -1,6 +1,6 @@
 # Thumbnail Formula — [Channel Name]
 
-> This file defines how the `@video-compiler` agent generates thumbnail images for this channel.
+> This file defines thumbnail direction for this channel. `@content-strategist` reads this during production brief generation; the pipeline generates the thumbnail via NBPro (Gemini).
 > Thumbnails are generated via Nano Banana 2 (gemini-3.1-flash-image-preview) — not pulled from video frames.
 > Fill in all bracketed sections before the first production run.
 > The agent reads this file alongside the production brief at thumbnail generation time.

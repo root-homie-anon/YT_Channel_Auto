@@ -452,7 +452,7 @@ async function runFromCompilation(
   // NOTE: Title, description, and hashtags must be set in scriptOutput BEFORE
   // the pipeline reaches this point. For music-only channels, the @content-strategist
   // agent generates metadata using the channel's frameworks and prompt context.
-  // For narrated channels, @script-writer generates all metadata.
+  // For narrated channels, @content-strategist generates all metadata.
   if (config.skipApproval) {
     log.info('skipApproval enabled — skipping final checkpoint, publishing as unlisted');
     // Write publish params as unlisted

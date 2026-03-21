@@ -200,9 +200,9 @@ Execute these phases IN ORDER. Do not skip steps. Save artifacts between phases 
     - Block 7 metadata: Pick DIFFERENT mood/style descriptors than last time
     - Block 8 tool credits: Include ONLY if config.toolCredits is true
     - Block 9 CTA: Pull from config.cta — skip if empty
-21. Generate tags[] (YouTube tags, not hashtags — 15-20 relevant search terms)
-22. Extract hashtags[] from your Block 10 output
-23. Update description-state.json with what you used:
+21. Generate hashtags[] from your Block 10 output — these are the only tags the agent produces
+    The pipeline strips # to produce YouTube API tags — do not generate a separate tags[] array
+22. Update description-state.json with what you used:
     Write to projects/$SLUG/description-state.json:
     {
       \"lastBlock1Opener\": <number used>,
@@ -216,13 +216,21 @@ Execute these phases IN ORDER. Do not skip steps. Save artifacts between phases 
       \"lastProductionId\": \"$PROD_ID\"
     }
 
+═══ PHASE 5b — GENERATE SCENE NAMES (multi-segment only) ═══
+24. If segmentCount > 1:
+    - Read the Scene Name Pool in title-formula.md
+    - For each segment, pick a scene name matching the environment/atmosphere used in that segment's image prompt
+    - Do not repeat scene names within the same video
+    - Write scene-labels.json to projects/$SLUG/output/$PROD_ID/:
+      [\"Scene Name 1\", \"Scene Name 2\", \"Scene Name 3\"]
+    - These labels become chapter names in the final video description
+
 ═══ PHASE 6 — START PIPELINE ═══
-24. POST to $DASHBOARD_URL/api/channels/$SLUG/run/$PROD_ID with JSON body:
+25. POST to $DASHBOARD_URL/api/channels/$SLUG/run/$PROD_ID with JSON body:
     {
       \"scriptOutput\": {
         \"title\": \"<locked title>\",
         \"description\": \"<full generated description>\",
-        \"tags\": [...],
         \"hashtags\": [...],
         \"script\": [{\"sectionName\": \"main\", \"narration\": \"\", \"imageCue\": \"$TOPIC\", \"durationSeconds\": 0}]
       },
@@ -314,16 +322,38 @@ Execute these phases IN ORDER. Do not skip steps.
     { \"title\": \"...\", \"candidateNumber\": N, \"reason\": \"...\" }
 
 ═══ PHASE 5 — GENERATE DESCRIPTION & HASHTAGS ═══
-14. Read the channel's description formula from the frameworks path in config.json
-15. Generate description, tags (15-20 search terms), and hashtags following the formula
+14. Read description formula from the path at config.frameworks.description
+15. Read locked-title.json — the locked title is an INPUT, not something to regenerate
+16. Read projects/$SLUG/description-state.json — note last-used values to AVOID repeating:
+    - Use a DIFFERENT Block 1 opener number than lastBlock1Opener
+    - Use a DIFFERENT Block 2 opener number than lastBlock2Opener
+    - Pick DIFFERENT genre/function/vibe hashtags than last time
+    - Pick DIFFERENT mood/style descriptors than last time
+17. Generate the full description block-by-block per the formula:
+    - Block 8 tool credits: include ONLY if config.toolCredits is true
+    - Block 9 CTA: pull from config.cta — skip if empty
+18. Generate hashtags[] from Block 10 output — these are the only tags the agent produces
+    The pipeline strips # to produce YouTube API tags — do not generate a separate tags[] array
+19. Update description-state.json with what you used this run:
+    Write to projects/$SLUG/description-state.json:
+    {
+      \"lastBlock1Opener\": <number used>,
+      \"lastBlock2Opener\": <number used>,
+      \"lastGenreTags\": [\"#tag1\", \"#tag2\"],
+      \"lastFunctionTags\": [\"#tag1\", \"#tag2\"],
+      \"lastVibeTags\": [\"#tag1\", \"#tag2\"],
+      \"lastMoodDescriptors\": [\"Focused\", \"Hypnotic\"],
+      \"lastStyleDescriptors\": [\"Downtempo\", \"Deep Bass\"],
+      \"updatedAt\": \"<ISO timestamp>\",
+      \"lastProductionId\": \"$PROD_ID\"
+    }
 
 ═══ PHASE 6 — START PIPELINE ═══
-16. POST to $DASHBOARD_URL/api/channels/$SLUG/run/$PROD_ID with JSON body:
+20. POST to $DASHBOARD_URL/api/channels/$SLUG/run/$PROD_ID with JSON body:
     {
       \"scriptOutput\": {
         \"title\": \"<locked title from step 13>\",
         \"description\": \"<generated description>\",
-        \"tags\": [...],
         \"hashtags\": [...],
         \"script\": [<sections from step 6>],
         \"teaserScript\": [<teaser sections from step 7b — ONLY if long+short format, omit otherwise>],

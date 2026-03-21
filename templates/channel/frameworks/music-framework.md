@@ -1,6 +1,6 @@
 # Music Framework
 
-> This file defines how `@asset-producer` generates music for all channel types.
+> This file defines music direction for all channel types. The pipeline generates music via Stable Audio.
 > Music is generated via Stable Audio (`src/services/stable-audio-service.ts`).
 > Track A: one background track per video, sits under VO, fresh generation per video.
 > Track B: one ~30-minute track per segment, the primary content of the video.

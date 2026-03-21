@@ -1,7 +1,7 @@
 # Image Framework — Music Only Channels
 
-> This file defines how `@asset-producer` generates images for Track B (music-only) channel videos.
-> It is a lookup and construction system — the agent does not interpret, it reads and builds.
+> This file defines how `@content-strategist` constructs image prompts for Track B (music-only) channel videos, and how the pipeline generates images via Flux.
+> It is a lookup and construction system — read and build from it, do not interpret.
 > Two inputs drive every generation: CATEGORY + UNIVERSE MODIFIER (optional).
 > This file covers image generation only. Animation direction lives in `runway-framework.md`.
 

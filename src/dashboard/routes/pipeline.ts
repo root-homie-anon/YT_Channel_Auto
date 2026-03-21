@@ -31,7 +31,7 @@ const PROJECT_ROOT = resolve(__dirname, '..', '..', '..');
 
 const router = Router();
 
-// Produce: sets up a production and waits for @script-writer to generate content.
+// Produce: sets up a production and waits for @content-strategist to generate content.
 // If scriptOutput is provided (from Claude Code), starts pipeline immediately.
 // Otherwise, creates a pending production that Claude Code picks up.
 router.post('/:slug/produce', async (req: Request, res: Response) => {

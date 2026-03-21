@@ -1,6 +1,6 @@
 # Runway ML Animation Framework — Music-Only Channels
 
-> This file defines how `@asset-producer` generates animated video clips from static images
+> This file defines how `@content-strategist` constructs animation prompts, and how the pipeline generates animated video clips from static images
 > using Runway ML's Gen-4 Turbo image-to-video API.
 > **Music-only channels only** — long/short narrated formats use Ken Burns (FFmpeg zoompan) instead.
 > Each generated image is animated into a short looping clip. These clips are concatenated

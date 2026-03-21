@@ -1,6 +1,6 @@
 # Teaser Formula — [Channel Name]
 
-> This file defines how the `@script-writer` agent generates short-form scripts for this channel.
+> This file defines how `@content-strategist` generates short-form teaser scripts for this channel.
 > Fill in all bracketed sections before the first production run.
 > The agent reads this file at the start of every short/teaser script generation task.
 

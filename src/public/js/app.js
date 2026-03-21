@@ -224,7 +224,7 @@ async function startProduction() {
       document.getElementById('produce-segments').value = '1';
     }
     if (res.status === 'pending_script') {
-      toast(`Production created — waiting for @script-writer (${res.productionId})`);
+      toast(`Production created — waiting for @content-strategist (${res.productionId})`);
     } else {
       toast(`Pipeline started: ${res.productionId}`);
     }
