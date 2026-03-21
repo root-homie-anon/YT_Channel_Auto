@@ -270,9 +270,10 @@ Execute these phases IN ORDER. Do not skip steps.
 
 ═══ PHASE 2 — GENERATE SCRIPT ═══
 5. Using script-formula.md, write a full narrated script for the topic: \"$TOPIC\"
+   - Follow the script formula's target length and structure EXACTLY — different channels have different lengths
 6. Structure the script as an array of sections, each with:
    { \"sectionName\": \"<name>\", \"narration\": \"<full narration text>\", \"imageCue\": \"<visual description for this section>\", \"durationSeconds\": 0 }
-7. The script should be 15-22 minutes when read aloud at natural pace
+7. The target length is defined in script-formula.md (e.g. 10-15 min or 15-22 min depending on channel)
 
 ═══ PHASE 2b — GENERATE TEASER SCRIPT (long+short channels only) ═══
 7b. Check config.json format — if it is \"long+short\":
@@ -284,12 +285,11 @@ Execute these phases IN ORDER. Do not skip steps.
    - This will be compiled as a YouTube Short (9:16 vertical)
 
 ═══ PHASE 3 — GENERATE PRODUCTION BRIEF ═══
-8. Based on the script content, generate a productionBrief object:
+8. Read thumbnail-formula.md to understand this channel's thumbnail system.
+   Based on the script content, generate a productionBrief object:
    {
      \"topic\": \"$TOPIC\",
      \"thumbnailDirection\": {
-       \"pillar\": \"<surveillance | archaeological | technical>\",
-       \"flavor\": \"<VHS | CCTV | NVG | aged photograph | blueprint — per pillar>\",
        \"nbproPrompt\": \"<COMPLETE ready-to-send NBPro prompt — see step 8b>\"
      },
      \"titleDirection\": {
@@ -301,25 +301,20 @@ Execute these phases IN ORDER. Do not skip steps.
    }
 
 8b. BUILD THE nbproPrompt — this is critical:
-   - Read thumbnail-formula.md — identify which pillar matches this video's content
-   - Select the correct pillar template (Surveillance / Archaeological / Technical)
-   - If Surveillance, pick the flavor (VHS / CCTV / NVG) that best fits the topic
-   - Fill in ALL template variables:
-     * [SUBJECT] — specific, grounded visual description from the script (not abstract)
-     * [FLAVOR] and [FLAVOR ARTIFACTS] — from the flavor tokens table (Surveillance only)
-     * [STAMP WORD] — from that pillar's approved word bank
-     * [2-3 CONTEXT WORDS] — lowercase curiosity hook relevant to this specific video
-   - The output must be the COMPLETE filled-in template — no placeholders, no variables
-   - Include the \"16:9 aspect ratio, 4K resolution.\" line at the end
+   - Read thumbnail-formula.md — follow the channel's specific thumbnail system
+   - Each channel has its own template/approach — do NOT assume pillars, stamps, or any specific system
+   - Fill in ALL variable slots defined in the channel's formula using content from the script
+   - The output must be the COMPLETE filled-in prompt — no placeholders, no variables
+   - Do NOT include \"Generate an image\" or resolution/aspect specs — the pipeline adds those
    - This prompt goes directly to Gemini image generation — it must stand alone
 
 ═══ PHASE 4 — GENERATE TITLE ═══
-9. Read title-formula.md — generate 4-5 title candidates following the formula EXACTLY
-10. Each candidate must use a different structural pattern from the formula
-11. Each candidate must be evaluated against the thumbnail concept (pairing principle)
-12. Select the strongest candidate
-13. Write locked title to projects/$SLUG/output/$PROD_ID/locked-title.json:
-    { \"title\": \"...\", \"candidateNumber\": N, \"reason\": \"...\" }
+9. Read title-formula.md — follow the channel's specific title system EXACTLY
+   - Some channels generate multiple candidates and select the best
+   - Some channels derive the title directly from the script (e.g. a character quote)
+   - Follow whatever process the formula defines
+10. Write locked title to projects/$SLUG/output/$PROD_ID/locked-title.json:
+    { \"title\": \"...\", \"reason\": \"...\" }
 
 ═══ PHASE 5 — GENERATE DESCRIPTION & HASHTAGS ═══
 14. Read description formula from the path at config.frameworks.description

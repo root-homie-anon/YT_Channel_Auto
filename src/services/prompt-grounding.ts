@@ -308,8 +308,11 @@ export async function groundImagePrompt(input: GroundingInput): Promise<Groundin
   const groundedPrompt = await rewriteWithClaude(imageCue, narration, topic, searchContext, imageFramework, previousContext, mode);
 
   // Enforce word limit (safety net — LLM should already respect it)
+  // Visual mode: 55 words (leaves room for appended style tags)
+  // Emotional mode: 90 words (full Flux prompt with references, hex, camera specs)
+  const wordLimit = mode === 'emotional' ? 90 : 55;
   const words = groundedPrompt.split(/\s+/).filter(Boolean);
-  const trimmed = words.length > 55 ? words.slice(0, 55).join(' ') : groundedPrompt;
+  const trimmed = words.length > wordLimit ? words.slice(0, wordLimit).join(' ') : groundedPrompt;
 
   log.info(`Grounded (${words.length}w): "${trimmed.slice(0, 80)}..."`);
 
