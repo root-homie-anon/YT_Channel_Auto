@@ -851,7 +851,8 @@ async function generateAssets(
         imageCue: section.imageCue,
         narration: section.narration,
       }));
-      const rawGrounding = await groundBatchPrompts(cuesForGrounding, topic, imageFramework);
+      const groundingMode = config.groundingMode ?? 'visual';
+      const rawGrounding = await groundBatchPrompts(cuesForGrounding, topic, imageFramework, groundingMode);
       groundingResults = rawGrounding;
       // Persist grounded prompts so resume skips this expensive step
       const cacheObj: Record<string, { groundedPrompt: string }> = {};
@@ -1098,6 +1099,8 @@ async function compileVideo(
       manifest,
       sections: scriptOutput.script,
       ...(config.visualFilter ? { visualFilterPreset: config.visualFilter } : {}),
+      ...(config.kenBurnsZoom ? { kenBurnsZoom: config.kenBurnsZoom } : {}),
+      ...(config.fadeBlack ? { fadeBlack: config.fadeBlack } : {}),
     });
 
     if (format === 'long+short') {

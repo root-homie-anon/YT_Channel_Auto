@@ -14,11 +14,14 @@ const log = createLogger('prompt-grounding');
 //      in what things actually look like
 // ---------------------------------------------------------------------------
 
+export type GroundingMode = 'visual' | 'emotional';
+
 interface GroundingInput {
   imageCue: string;
   narration: string;
   topic: string;
   imageFramework: string;
+  mode?: GroundingMode;
   previousContext?: {
     narration: string;
     cue: string;
@@ -143,6 +146,54 @@ You will be given the PREVIOUS section's narration and grounded prompt. Use this
 ## Output Format
 Return ONLY the rewritten prompt text. No explanation, no quotes, no labels. Just the prompt.`;
 
+const EMOTIONAL_GROUNDING_SYSTEM_PROMPT = `You are an emotional cinematographer that converts narrative image cues into Flux 2 Pro prompts driven by the emotional register of the narration.
+
+Your job: read the narration, identify the dominant emotion, and produce a Flux prompt that makes the viewer FEEL what they're hearing — using the correct Flux prompt structure.
+
+## CRITICAL — Emotional Alignment (Rule Zero)
+The image MUST match the emotional state of the narration at this exact moment. Before rewriting:
+1. Read the NARRATION and identify the emotional register — power, menace, cruelty, aftermath, isolation, indifference, calculation, confrontation
+2. Identify the SHIFT — has the emotion changed from the previous section?
+3. The image cue describes a SPECIFIC story moment — keep that specificity. Your job is to cinematograph it.
+4. Self-check: if someone saw only this image with no audio, would they feel the same thing? If not, fix it.
+
+## Flux Prompt Structure — Token Order (MUST follow)
+Flux weights earlier tokens more heavily. Build in this exact order:
+
+[SUBJECT + orientation + camera angle + scale] →
+[TWO visual universe references from the channel framework] →
+[Atmosphere color + hex + condition] →
+[Primary light color + hex + source] →
+[Accent color + hex + detail — only if scene warrants it] →
+[True black #000000 + what it anchors] →
+[Sony A7R IV + lens from framework + "fine grain, slight underexposure"] →
+[Atmosphere condition — fog, rain, stillness, etc.] →
+[Mood close — 3-6 words] →
+[16:9 cinematic frame]
+
+## Previous Image Context
+You will be given the PREVIOUS section's prompt. Use this to:
+1. **Shift the emotional register** visually when the narration shifts
+2. **Avoid repeating** the same composition, lens, or reference pairing
+3. **Build emotional arc** — the sequence should feel like a film, not a slideshow
+
+## Hard Rules
+- 60–90 words — under 40 is too thin, over 110 dilutes early tokens
+- ALWAYS include 2 visual universe references from the channel's approved list
+- ALWAYS include hex color codes for atmosphere, light, and accent
+- ALWAYS include true black #000000
+- ALWAYS include camera body + lens + "fine grain, slight underexposure"
+- ALWAYS close with mood line + "16:9 cinematic frame"
+- NO generic quality boosters (highly detailed, masterpiece, 4K, stunning)
+- NO negative prompts — reframe positively
+- NO stacked unanchored adjectives — every modifier attaches to a noun
+- NO readable text, screens, UI elements, data overlays
+- NO visible human faces — silhouettes, back-turned, hands only
+- One subject, one environment, one mood per prompt
+
+## Output Format
+Return ONLY the prompt text. No explanation, no quotes, no labels.`;
+
 async function rewriteWithClaude(
   imageCue: string,
   narration: string,
@@ -150,6 +201,7 @@ async function rewriteWithClaude(
   searchContext: string,
   imageFramework: string,
   previousContext?: GroundingInput['previousContext'],
+  mode: GroundingMode = 'visual',
 ): Promise<string> {
   const apiKey = requireEnv('ANTHROPIC_API_KEY');
 
@@ -171,7 +223,21 @@ Do NOT repeat the same scene, setting, or composition as the previous image. Adv
 `
     : '';
 
-  const userMessage = `## TOPIC
+  const userMessage = mode === 'emotional'
+    ? `## TOPIC
+${topic}
+
+${previousBlock}## NARRATION (what the viewer hears during this image)
+${narration}
+
+## RAW IMAGE CUE (rewrite this into a Flux prompt)
+${imageCue}
+
+## CHANNEL IMAGE FRAMEWORK (style rules, approved references, hex palette, lens guide)
+${imageFramework}
+
+Identify the dominant emotion in the narration. Cinematograph the image cue using the Flux prompt structure. Follow the token order exactly. Use references, hex codes, camera specs, and mood close from the framework. 60-90 words. Output ONLY the prompt.`
+    : `## TOPIC
 ${topic}
 
 ${previousBlock}## NARRATION (what the viewer hears during this image)
@@ -198,7 +264,7 @@ Rewrite the image cue into an optimized Flux prompt. Ground it in the visual res
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 200,
-      system: GROUNDING_SYSTEM_PROMPT,
+      system: mode === 'emotional' ? EMOTIONAL_GROUNDING_SYSTEM_PROMPT : GROUNDING_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }] as ClaudeMessage[],
     }),
   });
@@ -224,16 +290,22 @@ Rewrite the image cue into an optimized Flux prompt. Ground it in the visual res
  * Ground a single image cue: web search for visual context, then LLM rewrite.
  */
 export async function groundImagePrompt(input: GroundingInput): Promise<GroundingResult> {
-  const { imageCue, narration, topic, imageFramework, previousContext } = input;
+  const { imageCue, narration, topic, imageFramework, previousContext, mode = 'visual' } = input;
 
-  // Step 1: Search for visual reference
-  const searchQuery = buildSearchQuery(imageCue, topic);
-  log.info(`Searching: "${searchQuery.slice(0, 80)}"`);
-  const searchContext = await searchVisualContext(searchQuery);
+  // Step 1: Search for visual reference (skip for emotional mode — fiction doesn't need web research)
+  let searchContext: string;
+  if (mode === 'emotional') {
+    log.info(`Emotional grounding (no search): "${imageCue.slice(0, 60)}..."`);
+    searchContext = '';
+  } else {
+    const searchQuery = buildSearchQuery(imageCue, topic);
+    log.info(`Searching: "${searchQuery.slice(0, 80)}"`);
+    searchContext = await searchVisualContext(searchQuery);
+  }
 
-  // Step 2: LLM rewrite with grounded context + previous section awareness
-  log.info(`Grounding cue: "${imageCue.slice(0, 60)}..."`);
-  const groundedPrompt = await rewriteWithClaude(imageCue, narration, topic, searchContext, imageFramework, previousContext);
+  // Step 2: LLM rewrite — visual mode grounds in research, emotional mode grounds in narrative feeling
+  log.info(`Grounding cue (${mode}): "${imageCue.slice(0, 60)}..."`);
+  const groundedPrompt = await rewriteWithClaude(imageCue, narration, topic, searchContext, imageFramework, previousContext, mode);
 
   // Enforce word limit (safety net — LLM should already respect it)
   const words = groundedPrompt.split(/\s+/).filter(Boolean);
@@ -256,6 +328,7 @@ export async function groundBatchPrompts(
   cues: Array<{ id: string; imageCue: string; narration: string }>,
   topic: string,
   imageFramework: string,
+  mode: GroundingMode = 'visual',
 ): Promise<Map<string, GroundingResult>> {
   const results = new Map<string, GroundingResult>();
   const DELAY_MS = 500; // gentle pacing between API calls
@@ -272,6 +345,7 @@ export async function groundBatchPrompts(
         narration: cue.narration,
         topic,
         imageFramework,
+        mode,
         ...(previousContext ? { previousContext } : {}),
       });
       results.set(cue.id, result);

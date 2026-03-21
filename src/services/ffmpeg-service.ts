@@ -24,6 +24,8 @@ interface CompileOptions {
   sections: ScriptSection[];
   resolution?: string;
   visualFilterPreset?: string;
+  kenBurnsZoom?: { start: number; end: number };
+  fadeBlack?: { fadeInDuration: number; fadeOutDuration: number; musicTailDuration: number };
 }
 
 /**
@@ -187,7 +189,8 @@ function buildKenBurnsCrossfadeFilter(
   width: string,
   height: string,
   scaleBase: string,
-  crossfadeDuration: number
+  crossfadeDuration: number,
+  zoomRange?: { start: number; end: number }
 ): { filterParts: string[]; finalVideoLabel: string } {
   const filterParts: string[] = [];
 
@@ -197,8 +200,10 @@ function buildKenBurnsCrossfadeFilter(
     const totalFrames = Math.round(duration * 30);
 
     const zoomIn = i % 2 === 0;
-    const zoomStart = zoomIn ? '1.05' : '1.15';
-    const zoomEnd = zoomIn ? '1.15' : '1.05';
+    const zStart = zoomRange?.start ?? 1.05;
+    const zEnd = zoomRange?.end ?? 1.15;
+    const zoomStart = zoomIn ? zStart.toFixed(2) : zEnd.toFixed(2);
+    const zoomEnd = zoomIn ? zEnd.toFixed(2) : zStart.toFixed(2);
     const zoomExpr = `${zoomStart}+(${zoomEnd}-${zoomStart})*on/${totalFrames}`;
     const xExpr = zoomIn
       ? `iw/2-(iw/zoom/2)+on/${totalFrames}*20`
@@ -255,7 +260,7 @@ function buildKenBurnsCrossfadeFilter(
 }
 
 export async function compileLongFormVideo(options: CompileOptions): Promise<CompilationResult> {
-  const { outputDir, manifest, sections, resolution = '1920x1080', visualFilterPreset } = options;
+  const { outputDir, manifest, sections, resolution = '1920x1080', visualFilterPreset, kenBurnsZoom, fadeBlack } = options;
   await ensureDir(outputDir);
 
   const videoPath = join(outputDir, 'final-video.mp4');
@@ -289,7 +294,8 @@ export async function compileLongFormVideo(options: CompileOptions): Promise<Com
       width,
       height,
       '3000:-1',
-      CROSSFADE_DURATION
+      CROSSFADE_DURATION,
+      kenBurnsZoom
     );
 
     // Add voiceover (single file with full narration)
@@ -307,19 +313,49 @@ export async function compileLongFormVideo(options: CompileOptions): Promise<Com
       inputIndex++;
     }
 
-    // Map final video output
-    filterParts.push(`[${finalVideoLabel}]null[vout]`);
+    // Apply fade from/to black if configured
+    if (fadeBlack) {
+      const fadeIn = fadeBlack.fadeInDuration;
+      const fadeOut = fadeBlack.fadeOutDuration;
+      const tail = fadeBlack.musicTailDuration;
+      // Estimate total video duration for fade-out start point
+      const totalVidDuration = durations.reduce((s, d) => s + d, 0) - (manifest.images.length - 1) * CROSSFADE_DURATION;
 
-    // Mix voiceover with background music
-    if (manifest.voiceover.length > 0 && musicInputIndex >= 0) {
+      // Video: fade in from black, fade out to black, then pad with black frames for music tail
       filterParts.push(
-        `[${musicInputIndex}:a]volume=0.15[bgmusic]`,
-        `[${voInputIndex}:a][bgmusic]amix=inputs=2:duration=first:dropout_transition=3[aout]`
+        `[${finalVideoLabel}]fade=t=in:st=0:d=${fadeIn},` +
+        `fade=t=out:st=${(totalVidDuration - fadeOut).toFixed(3)}:d=${fadeOut},` +
+        `tpad=stop_mode=color:stop_duration=${tail}:color=black[vout]`
       );
-    } else if (manifest.voiceover.length > 0) {
-      filterParts.push(`[${voInputIndex}:a]acopy[aout]`);
-    } else if (musicInputIndex >= 0) {
-      filterParts.push(`[${musicInputIndex}:a]acopy[aout]`);
+
+      // Audio: mix VO + music, then let music continue for the tail duration after VO ends
+      if (manifest.voiceover.length > 0 && musicInputIndex >= 0) {
+        filterParts.push(
+          `[${musicInputIndex}:a]volume=0.15[bgmusic]`,
+          `[${voInputIndex}:a]apad=pad_dur=${tail}[vopad]`,
+          `[vopad][bgmusic]amix=inputs=2:duration=longest:dropout_transition=${tail + fadeOut}[amixed]`,
+          `[amixed]afade=t=out:st=${(totalVidDuration + tail - fadeOut).toFixed(3)}:d=${fadeOut}[aout]`
+        );
+      } else if (manifest.voiceover.length > 0) {
+        filterParts.push(`[${voInputIndex}:a]acopy[aout]`);
+      } else if (musicInputIndex >= 0) {
+        filterParts.push(`[${musicInputIndex}:a]acopy[aout]`);
+      }
+    } else {
+      // Standard: no fades
+      filterParts.push(`[${finalVideoLabel}]null[vout]`);
+
+      // Mix voiceover with background music
+      if (manifest.voiceover.length > 0 && musicInputIndex >= 0) {
+        filterParts.push(
+          `[${musicInputIndex}:a]volume=0.15[bgmusic]`,
+          `[${voInputIndex}:a][bgmusic]amix=inputs=2:duration=first:dropout_transition=3[aout]`
+        );
+      } else if (manifest.voiceover.length > 0) {
+        filterParts.push(`[${voInputIndex}:a]acopy[aout]`);
+      } else if (musicInputIndex >= 0) {
+        filterParts.push(`[${musicInputIndex}:a]acopy[aout]`);
+      }
     }
 
     const filterComplex = filterParts.join(';');

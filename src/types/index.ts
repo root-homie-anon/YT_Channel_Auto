@@ -14,7 +14,10 @@ export interface ChannelConfig {
   frameworks: FrameworkPaths;
   musicPrompt?: string;
   skipApproval?: boolean;
+  groundingMode?: 'visual' | 'emotional';
   visualFilter?: string;
+  kenBurnsZoom?: { start: number; end: number };
+  fadeBlack?: { fadeInDuration: number; fadeOutDuration: number; musicTailDuration: number };
   introOutro?: {
     introPath?: string;
     outroPath?: string;
