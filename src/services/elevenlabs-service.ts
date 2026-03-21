@@ -61,7 +61,7 @@ export async function generateVoiceover(options: VoiceoverOptions): Promise<Asse
             },
           }),
         },
-        60_000
+        180_000
       );
 
       if (!response.ok) {
